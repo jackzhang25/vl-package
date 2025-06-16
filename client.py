@@ -5,8 +5,47 @@ import jwt
 import os
 from dotenv import load_dotenv
 
-# Load environment variables
+class Dataset:
+    def __init__(self, client, dataset_id: str):
+        self.client = client
+        self.dataset_id = dataset_id
+        self.base_url = client.base_url
 
+    def get_stats(self) -> dict:
+        """Get statistics for this dataset"""
+        response = self.client.session.get(
+            f"{self.base_url}/dataset/{self.dataset_id}/stats",
+            headers=self.client._get_headers()
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def get_details(self) -> dict:
+        """Get details for this dataset"""
+        response = self.client.session.get(
+            f"{self.base_url}/dataset/{self.dataset_id}",
+            headers=self.client._get_headers_no_jwt()
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def explore(self) -> dict:
+        """Explore this dataset"""
+        response = self.client.session.get(
+            f"{self.base_url}/explore/{self.dataset_id}",
+            headers=self.client._get_headers_no_jwt()
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def delete(self) -> dict:
+        """Delete this dataset"""
+        response = self.client.session.delete(
+            f"{self.base_url}/dataset/{self.dataset_id}",
+            headers=self.client._get_headers_no_jwt()
+        )
+        response.raise_for_status()
+        return response.json()
 
 class VisualLayerClient:
     def __init__(self, api_key: str, api_secret: str):
@@ -82,15 +121,6 @@ class VisualLayerClient:
                 print(f"Error response: {e.response.text}")
             raise
     
-    def get_dataset_stats(self, dataset_id: UUID) -> dict:
-        """Get statistics for a specific dataset"""
-        response = self.session.get(
-            f"{self.base_url}/dataset/{dataset_id}/stats",
-            headers=self._get_headers()
-        )
-        response.raise_for_status()
-        return response.json()
-    
     def healthcheck(self) -> dict:
         """Check the health of the API"""
         response = self.session.get(
@@ -108,43 +138,11 @@ class VisualLayerClient:
         )
         response.raise_for_status() 
         return response.json()
-    
-    def get_dataset_stats(self, dataset_id: str) -> dict:
-        """Get statistics for a specific dataset"""
-        response = self.session.get(
-            f"{self.base_url}/dataset/{dataset_id}/stats",
-            headers=self._get_headers()
-        )
-        response.raise_for_status()
-        return response.json()
-   
-    def get_dataset_by_id(self, dataset_id: str) -> dict:
-        """Get a specific dataset"""
-        response = self.session.get(
-            f"{self.base_url}/dataset/{dataset_id}",
-            headers=self._get_headers_no_jwt()
-        )
-        response.raise_for_status()
-        return response.json()
-    
-    def explore_dataset(self, dataset_id: str) -> dict:
-        """Explore a specific dataset"""
-        response = self.session.get(
-            f"{self.base_url}/explore/{dataset_id}",
-            headers=self._get_headers_no_jwt()
-        )
-        response.raise_for_status()
-        return response.json()
-    
-    def delete_dataset(self, dataset_id: str) -> dict:
-        """Delete a specific dataset"""
-        response = self.session.delete(
-            f"{self.base_url}/dataset/{dataset_id}",
-            headers=self._get_headers_no_jwt()
-        )
-        response.raise_for_status()
-        return response.json()
-    
+
+    def get_dataset(self, dataset_id: str) -> Dataset:
+        """Get a dataset object for the given ID"""
+        return Dataset(self, dataset_id)
+
 # Usage example:
 def main():
     load_dotenv()
@@ -158,40 +156,63 @@ def main():
         print("Please make sure VISUAL_LAYER_API_KEY and VISUAL_LAYER_API_SECRET are set in your .env file")
         return
     
-    print("Initializing client...")
+    print("Initializing Visual Layer client...")
     client = VisualLayerClient(API_KEY, API_SECRET)
     
     try:
-        print("Checking health...")
-        client.healthcheck()
-        print("Health check passed")
-        print(client.get_dataset_by_id("3972b3fc-1809-11ef-bb76-064432e0d220"))
-        #print(client.explore_dataset("3972b3fc-1809-11ef-bb76-064432e0d220"))
-        print("Getting all datasets...")
+        # Check API health
+        print("\nChecking API health...")
+        health_status = client.healthcheck()
+        print(f"API Health Status: {health_status}")
+
+        # Get all available datasets
+        print("\nFetching all datasets...")
         all_datasets = client.get_all_datasets()
-        print("Got all datasets")
-        #for dataset in all_datasets:
-        #    print(dataset)
-            #stats = client.get_dataset_by_id(dataset['id'])
-            #print(stats)
+        print(f"Found {len(all_datasets)} datasets")
 
         # Get sample datasets
-        print("\nGetting sample datasets...")
+        print("\nFetching sample datasets...")
         sample_datasets = client.get_sample_datasets()
-        print("Available sample datasets:")
+        print(f"Found {len(sample_datasets)} sample datasets:")
         for dataset in sample_datasets:
-            print(f"ID: {dataset['dataset_id']}, Name: {dataset['display_name']}")
+            print(f"- {dataset['display_name']} (ID: {dataset['dataset_id']})")
+
+        # Example: Working with a specific dataset
+        if sample_datasets:
+            print("\nWorking with a sample dataset...")
+            sample_dataset = client.get_dataset(sample_datasets[0]['dataset_id'])
+            
+            # Get dataset details
+            print("\nFetching dataset details...")
+            details = sample_dataset.get_details()
+            print(f"Dataset Name: {details.get('name', 'N/A')}")
+            print(f"Dataset Type: {details.get('type', 'N/A')}")
+            
+            # Get dataset statistics
+            print("\nFetching dataset statistics...")
+            stats = sample_dataset.get_stats()
+            print(f"Statistics: {stats}")
+            
+            # Explore dataset
+            print("\nExploring dataset...")
+            exploration = sample_dataset.explore()
+            print(f"Exploration results: {exploration}")
+
+        # Example: Working with a custom dataset
+        custom_dataset_id = "3972b3fc-1809-11ef-bb76-064432e0d220"  # Replace with your dataset ID
+        print(f"\nWorking with custom dataset (ID: {custom_dataset_id})...")
+        custom_dataset = client.get_dataset(custom_dataset_id)
         
-        # Get stats for a known test dataset
-        #test_dataset_id = UUID("8b4d2f7c0-48a8-11f0-939d-0e8cb73ee367")  # Known test dataset ID
-        #stats = client.get_dataset_stats(test_dataset_id)
-        
-        ##print(f"Dataset: {stats['dataset']}")
-        #if stats.get('redirect_url'):
-        #    print(f"Redirect URL: {stats['redirect_url']}")
+        try:
+            details = custom_dataset.get_details()
+            print(f"Custom Dataset Details: {details}")
+        except requests.exceptions.RequestException as e:
+            print(f"Error accessing custom dataset: {str(e)}")
             
     except requests.exceptions.RequestException as e:
-        print(f"Error: {str(e)}")
+        print(f"\nError: {str(e)}")
+    except Exception as e:
+        print(f"\nUnexpected error: {str(e)}")
 
 if __name__ == "__main__":
     main()
