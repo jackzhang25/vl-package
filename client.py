@@ -143,6 +143,82 @@ class VisualLayerClient:
         """Get a dataset object for the given ID"""
         return Dataset(self, dataset_id)
 
+    def create_dataset_from_local_folder(self, folder_path: str, dataset_name: str, pipeline_type: str = None) -> dict:
+        """
+        Create a dataset from a local folder.
+        
+        Args:
+            folder_path (str): Full system path to the folder containing files for processing
+            dataset_name (str): The desired name of the dataset
+            pipeline_type (str, optional): Type of pipeline to use for processing
+            
+        Returns:
+            dict: Response containing dataset information
+            
+        Raises:
+            requests.exceptions.RequestException: If the request fails
+            ValueError: If the path or name is invalid
+        """
+        if not folder_path or not dataset_name:
+            raise ValueError("Both folder_path and dataset_name are required")
+            
+        if not os.path.exists(folder_path):
+            raise ValueError(f"Folder path does not exist: {folder_path}")
+            
+        if not os.path.isdir(folder_path):
+            raise ValueError(f"Path is not a directory: {folder_path}")
+            
+        url = f"{self.base_url}/dataset"
+        
+        # Prepare form data with all required fields
+        form_data = {
+            'dataset_name': dataset_name,
+            'vl_dataset_id': '',
+            'bucket_path': '',
+            'uploaded_filename': folder_path,
+            'config_url': '',
+            'pipeline_type': pipeline_type if pipeline_type else ''
+        }
+        
+        try:
+            headers = self._get_headers()
+            headers['Content-Type'] = 'application/x-www-form-urlencoded'
+            
+            print("\n=== Request Details ===")
+            print(f"URL: {url}")
+            print(f"Headers: {headers}")
+            print(f"Form Data: {form_data}")
+            
+            response = self.session.post(
+                url,
+                data=form_data,  # Use data parameter for form data
+                headers=headers,
+                timeout=30  # Increased timeout for processing
+            )
+            
+            print(f"\nResponse Status: {response.status_code}")
+            print(f"Response Headers: {dict(response.headers)}")
+            print(f"Response Body: {response.text}")
+            
+            response.raise_for_status()
+            result = response.json()
+            
+            if result.get('status') == 'error':
+                raise requests.exceptions.RequestException(result.get('message', 'Unknown error'))
+                
+            return result
+            
+        except requests.exceptions.Timeout:
+            raise requests.exceptions.RequestException("Request timed out - dataset processing may take longer than expected")
+        except requests.exceptions.RequestException as e:
+            if hasattr(e, 'response') and e.response is not None:
+                try:
+                    error_data = e.response.json()
+                    raise requests.exceptions.RequestException(error_data.get('message', str(e)))
+                except ValueError:
+                    pass
+            raise
+
 # Usage example:
 def main():
     load_dotenv()
@@ -164,6 +240,33 @@ def main():
         print("\nChecking API health...")
         health_status = client.healthcheck()
         print(f"API Health Status: {health_status}")
+
+        # Example: Create dataset from local folder
+        print("\nCreating dataset from local folder...")
+        try:
+            # Using the specified path
+            local_folder = "/Users/Jack/Downloads/archive/images"
+            dataset_name = "archive_images_dataset"
+            
+            print(f"Attempting to create dataset from: {local_folder}")
+            print(f"Dataset name: {dataset_name}")
+            
+            result = client.create_dataset_from_local_folder(local_folder, dataset_name)
+            print(f"\nDataset creation started:")
+            print(f"- Status: {result.get('status')}")
+            print(f"- Dataset ID: {result.get('dataset_id')}")
+            print(f"- Name: {result.get('name')}")
+            
+            # Get the created dataset
+            dataset = client.get_dataset(result['dataset_id'])
+            print("\nFetching dataset details...")
+            details = dataset.get_details()
+            print(f"Dataset Details: {details}")
+            
+        except ValueError as e:
+            print(f"Validation error: {str(e)}")
+        except requests.exceptions.RequestException as e:
+            print(f"Error creating dataset: {str(e)}")
 
         # Get all available datasets
         print("\nFetching all datasets...")
