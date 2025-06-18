@@ -4,6 +4,7 @@ from datetime import datetime, timezone, timedelta
 import jwt
 import os
 from dotenv import load_dotenv
+import pandas as pd
 
 class Dataset:
     def __init__(self, client, dataset_id: str):
@@ -24,25 +25,49 @@ class Dataset:
         """Get details for this dataset"""
         response = self.client.session.get(
             f"{self.base_url}/dataset/{self.dataset_id}",
-            headers=self.client._get_headers_no_jwt()
+            headers=self.client._get_headers()
         )
         response.raise_for_status()
         return response.json()
 
-    def explore(self) -> dict:
-        """Explore this dataset"""
+    def explore(self) -> pd.DataFrame:
+        """Explore this dataset and return previews as a DataFrame"""
         response = self.client.session.get(
             f"{self.base_url}/explore/{self.dataset_id}",
-            headers=self.client._get_headers_no_jwt()
+            headers=self.client._get_headers()
         )
         response.raise_for_status()
-        return response.json()
+        data = response.json()
+        
+        # Extract just the previews from the first cluster
+        if data.get('clusters') and len(data['clusters']) > 0:
+            previews = data['clusters'][0].get('previews', [])
+            # Convert previews to DataFrame
+            df = pd.DataFrame(previews)
+            return df
+        else:
+            return pd.DataFrame()  # Return empty DataFrame if no previews found
 
     def delete(self) -> dict:
         """Delete this dataset"""
         response = self.client.session.delete(
             f"{self.base_url}/dataset/{self.dataset_id}",
             headers=self.client._get_headers_no_jwt()
+        )
+        response.raise_for_status()
+        return response.json()
+    
+    def export(self) -> dict:
+        """Export this dataset in JSON format"""
+        url = f"{self.base_url}/dataset/{self.dataset_id}/export"
+        params = {'export_format': 'json'}
+        headers = {
+            **self.client._get_headers()
+        }
+        response = self.client.session.get(
+            url,
+            params=params,
+            headers=headers
         )
         response.raise_for_status()
         return response.json()
@@ -241,77 +266,50 @@ def main():
         health_status = client.healthcheck()
         print(f"API Health Status: {health_status}")
 
-        # Example: Create dataset from local folder
-        print("\nCreating dataset from local folder...")
-        try:
-            # Using the specified path
-            local_folder = "/Users/Jack/Downloads/archive/images"
-            dataset_name = "archive_images_dataset"
-            
-            print(f"Attempting to create dataset from: {local_folder}")
-            print(f"Dataset name: {dataset_name}")
-            
-            result = client.create_dataset_from_local_folder(local_folder, dataset_name)
-            print(f"\nDataset creation started:")
-            print(f"- Status: {result.get('status')}")
-            print(f"- Dataset ID: {result.get('dataset_id')}")
-            print(f"- Name: {result.get('name')}")
-            
-            # Get the created dataset
-            dataset = client.get_dataset(result['dataset_id'])
-            print("\nFetching dataset details...")
-            details = dataset.get_details()
-            print(f"Dataset Details: {details}")
-            
-        except ValueError as e:
-            print(f"Validation error: {str(e)}")
-        except requests.exceptions.RequestException as e:
-            print(f"Error creating dataset: {str(e)}")
-
-        # Get all available datasets
-        print("\nFetching all datasets...")
-        all_datasets = client.get_all_datasets()
-        print(f"Found {len(all_datasets)} datasets")
-
-        # Get sample datasets
-        print("\nFetching sample datasets...")
-        sample_datasets = client.get_sample_datasets()
-        print(f"Found {len(sample_datasets)} sample datasets:")
-        for dataset in sample_datasets:
-            print(f"- {dataset['display_name']} (ID: {dataset['dataset_id']})")
-
-        # Example: Working with a specific dataset
-        if sample_datasets:
-            print("\nWorking with a sample dataset...")
-            sample_dataset = client.get_dataset(sample_datasets[0]['dataset_id'])
-            
-            # Get dataset details
-            print("\nFetching dataset details...")
-            details = sample_dataset.get_details()
-            print(f"Dataset Name: {details.get('name', 'N/A')}")
-            print(f"Dataset Type: {details.get('type', 'N/A')}")
-            
-            # Get dataset statistics
-            print("\nFetching dataset statistics...")
-            stats = sample_dataset.get_stats()
-            print(f"Statistics: {stats}")
-            
-            # Explore dataset
-            print("\nExploring dataset...")
-            exploration = sample_dataset.explore()
-            print(f"Exploration results: {exploration}")
-
-        # Example: Working with a custom dataset
-        custom_dataset_id = "3972b3fc-1809-11ef-bb76-064432e0d220"  # Replace with your dataset ID
-        print(f"\nWorking with custom dataset (ID: {custom_dataset_id})...")
-        custom_dataset = client.get_dataset(custom_dataset_id)
+        # Explore specific dataset
+        dataset_id = "9178adde-31c8-11f0-93d6-4e7b67d53dad"
+        print(f"\nExploring dataset with ID: {dataset_id}")
         
-        try:
-            details = custom_dataset.get_details()
-            print(f"Custom Dataset Details: {details}")
-        except requests.exceptions.RequestException as e:
-            print(f"Error accessing custom dataset: {str(e)}")
+        dataset = client.get_dataset(dataset_id)
+        print("\nFetching dataset details...")
+        details = dataset.get_details()
+        print(f"Dataset Details: {details}")
+        
+        print("\nExploring dataset previews...")
+        df = dataset.explore()
+        
+        if not df.empty:
+            # Display DataFrame information
+            print("\n=== Dataset Previews ===")
+            print(f"\nNumber of previews: {len(df)}")
+            print(f"Number of columns: {len(df.columns)}")
             
+            # Select and display relevant columns
+            relevant_columns = ['file_name', 'image_uri', 'media_uri', 'media_thumb_uri', 'relevance_score']
+            print("\nPreview information:")
+            print(df[relevant_columns].head())
+            
+            # Save to CSV if needed
+            csv_filename = f"dataset_{dataset_id}_previews.csv"
+            df.to_csv(csv_filename, index=False)
+            print(f"\nSaved previews to {csv_filename}")
+        else:
+            print("\nNo previews found in the dataset")
+            
+        # Export specific dataset
+        print(f"\nExporting dataset with ID: {dataset_id}")
+        export_data = dataset.export()
+        print("\n=== Exported Data (truncated to first 1000 characters) ===")
+        export_str = str(export_data)
+        print(export_str[:1000] + ("..." if len(export_str) > 1000 else ""))
+        
+        # Optionally, save to a file
+        export_filename = f"dataset_{dataset_id}_export.json"
+        with open(export_filename, "w") as f:
+            import json
+            json.dump(export_data, f, indent=2)
+        print(f"\nExported data saved to {export_filename}")
+        
     except requests.exceptions.RequestException as e:
         print(f"\nError: {str(e)}")
     except Exception as e:
