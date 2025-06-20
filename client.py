@@ -211,9 +211,37 @@ class VisualLayerClient:
         response.raise_for_status() 
         return response.json()
 
-    def get_dataset(self, dataset_id: str) -> Dataset:
-        """Get a dataset object for the given ID"""
+    def get_dataset(self, dataset_id: str) -> pd.DataFrame:
+        """Get dataset details as a DataFrame for the given ID"""
+        return self.get_dataset_details_as_dataframe(dataset_id)
+    
+    def get_dataset_details_as_dataframe(self, dataset_id: str) -> pd.DataFrame:
+        """Get dataset details as a DataFrame for the given ID"""
+        response = self.session.get(
+            f"{self.base_url}/dataset/{dataset_id}",
+            headers=self._get_headers()
+        )
+        response.raise_for_status()
+        dataset_details = response.json()
+        
+        # Select only the specific fields requested
+        selected_fields = [
+            'id', 'created_by', 'source_dataset_id', 'owned_by', 'display_name', 
+            'description', 'preview_uri', 'source_type', 'source_uri', 'created_at', 
+            'updated_at', 'filename', 'sample', 'status', 'n_images'
+        ]
+        
+        # Filter the dataset details to only include the selected fields
+        filtered_details = {field: dataset_details.get(field) for field in selected_fields}
+        
+        # Convert to DataFrame with a single row
+        df = pd.DataFrame([filtered_details])
+        return df
+    
+    def get_dataset_object(self, dataset_id: str) -> Dataset:
+        """Get a dataset object for the given ID (for operations like export, delete, etc.)"""
         return Dataset(self, dataset_id)
+
     def create_dataset_from_s3_bucket(self, s3_bucket_path: str, dataset_name: str, pipeline_type: str = None) -> dict:
         """
         Create a dataset from an S3 bucket.
@@ -284,12 +312,13 @@ class VisualLayerClient:
                     pass
             raise
 
-    def create_dataset_from_local_folder(self, folder_path: str, dataset_name: str, pipeline_type: str = None) -> dict:
+    def create_dataset_from_local_folder(self, file_path: str, filename: str, dataset_name: str, pipeline_type: str = None) -> dict:
         """
-        Create a dataset from a local folder.
+        Create a dataset from a local zip file.
         
         Args:
-            folder_path (str): Full system path to the folder containing files for processing
+            file_path (str): Full path to the zip file (e.g., "/path/to/images.zip")
+            filename (str): Name of the zip file (e.g., "images.zip")
             dataset_name (str): The desired name of the dataset
             pipeline_type (str, optional): Type of pipeline to use for processing
             
@@ -298,25 +327,24 @@ class VisualLayerClient:
             
         Raises:
             requests.exceptions.RequestException: If the request fails
-            ValueError: If the path or name is invalid
+            ValueError: If the file path, filename, or name is invalid
         """
-        if not folder_path or not dataset_name:
-            raise ValueError("Both folder_path and dataset_name are required")
+        if not file_path or not filename or not dataset_name:
+            raise ValueError("file_path, filename, and dataset_name are all required")
             
-        if not os.path.exists(folder_path):
-            raise ValueError(f"Folder path does not exist: {folder_path}")
+        # Check if file exists
+        if not os.path.exists(file_path):
+            raise ValueError(f"File not found: {file_path}")
             
-        if not os.path.isdir(folder_path):
-            raise ValueError(f"Path is not a directory: {folder_path}")
-            
+        # Step 1: Create the dataset
         url = f"{self.base_url}/dataset"
         
-        # Prepare form data with all required fields
+        # Prepare form data for dataset creation
         form_data = {
             'dataset_name': dataset_name,
             'vl_dataset_id': '',
             'bucket_path': '',
-            'uploaded_filename': folder_path,
+            'uploaded_filename': filename,
             'config_url': '',
             'pipeline_type': pipeline_type if pipeline_type else ''
         }
@@ -325,30 +353,67 @@ class VisualLayerClient:
             headers = self._get_headers()
             headers['Content-Type'] = 'application/x-www-form-urlencoded'
             
-            print("\n=== Request Details ===")
+            print("\n=== Step 1: Creating Dataset ===")
             print(f"URL: {url}")
-            print(f"Headers: {headers}")
             print(f"Form Data: {form_data}")
             
             response = self.session.post(
                 url,
-                data=form_data,  # Use data parameter for form data
-                headers=headers,
-                timeout=30  # Increased timeout for processing
+                data=form_data,
+                headers=headers
             )
             
-            print(f"\nResponse Status: {response.status_code}")
-            print(f"Response Headers: {dict(response.headers)}")
-            print(f"Response Body: {response.text}")
-            
+            print(f"Response Status: {response.status_code}")
             response.raise_for_status()
             result = response.json()
-            
+            print(result)
             if result.get('status') == 'error':
                 raise requests.exceptions.RequestException(result.get('message', 'Unknown error'))
-                
-            return result
             
+            dataset_id = result.get('id')
+            if not dataset_id:
+                raise requests.exceptions.RequestException("No dataset_id returned from creation")
+            
+            print(f"Dataset created with ID: {dataset_id}")
+            
+            # Step 2: Upload the zip file to the dataset
+            upload_url = f"{self.base_url}/dataset/{dataset_id}/upload"
+            
+            print(f"\n=== Step 2: Uploading Zip File ===")
+            print(f"Upload URL: {upload_url}")
+            print(f"File path: {file_path}")
+            print(f"Filename: {filename}")
+            
+            # Prepare multipart form data for file upload
+            with open(file_path, 'rb') as file:
+                files = {
+                    'file': (filename, file, 'application/zip')
+                }
+                data = {
+                    'operations': 'READ'
+                }
+                
+                upload_headers = self._get_headers()
+                # Remove Content-Type header to let requests set it for multipart
+                upload_headers.pop('Content-Type', None)
+                
+                upload_response = self.session.post(
+                    upload_url,
+                    files=files,
+                    data=data,
+                    headers=upload_headers,
+                )
+                
+                print(f"Upload Response Status: {upload_response.status_code}")
+                upload_response.raise_for_status()
+                upload_result = upload_response.json()
+                
+                print(f"Upload successful: {upload_result}")
+                
+                # Return the combined result
+                result['upload_result'] = upload_result
+                return result
+                
         except requests.exceptions.Timeout:
             raise requests.exceptions.RequestException("Request timed out - dataset processing may take longer than expected")
         except requests.exceptions.RequestException as e:
@@ -359,6 +424,10 @@ class VisualLayerClient:
                 except ValueError:
                     pass
             raise
+        except FileNotFoundError:
+            raise ValueError(f"Zip file not found: {file_path}")
+        except Exception as e:
+            raise requests.exceptions.RequestException(f"Unexpected error: {str(e)}")
 
 def main():
     load_dotenv()
@@ -381,53 +450,39 @@ def main():
         health_status = client.healthcheck()
         print(f"API Health Status: {health_status}")
 
-        # Test creating dataset from S3 bucket
-        print("\n=== Testing S3 Bucket Dataset Creation ===")
-        s3_bucket_path = "pokemondataset/images/"
-        dataset_name = "pokemon_test_dataset"
+        # Test creating dataset from local zip file
+        print("\n=== Testing Local Zip File Dataset Creation ===")
+        file_path = "/Users/Jack/Downloads/archive/images.zip"
+        filename = "images.zip"
+        dataset_name = "test_local_zip_dataset"
         
-        print(f"Creating dataset from S3 bucket: {s3_bucket_path}")
+        print(f"File path: {file_path}")
+        print(f"Filename: {filename}")
         print(f"Dataset name: {dataset_name}")
         
-        result = client.create_dataset_from_s3_bucket(s3_bucket_path, dataset_name)
-        print(f"\nDataset creation result: {result}")
-        
-        # If successful, get the dataset ID and test other operations
-        if result.get('dataset_id'):
-            dataset_id = result['dataset_id']
-            print(f"\nCreated dataset with ID: {dataset_id}")
+        try:
+            result = client.create_dataset_from_local_folder(file_path, filename, dataset_name)
+            print(f"\nDataset creation result: {result}")
             
-            # Get dataset details
-            dataset = client.get_dataset(dataset_id)
-            details = dataset.get_details()
-            print(f"\nDataset details: {details}")
-            
-            # Get dataset stats
-            stats = dataset.get_status()
-            print(f"\nDataset stats: {stats}")
+            # If successful, get the dataset ID and test other operations
+            if result.get('dataset_id'):
+                dataset_id = result['dataset_id']
+                print(f"\nCreated dataset with ID: {dataset_id}")
+                
+                # Get dataset details as DataFrame
+                dataset_df = client.get_dataset(dataset_id)
+                print(f"\nDataset details:")
+                print(dataset_df.to_string(index=False))
+                
+                # Save dataset details to CSV
+                dataset_csv_filename = f"dataset_{dataset_id}_details.csv"
+                dataset_df.to_csv(dataset_csv_filename, index=False)
+                print(f"\nSaved dataset details to: {dataset_csv_filename}")
+                
+        except Exception as e:
+            print(f"Error creating dataset from local zip: {str(e)}")
 
-        # Test the new export function
-        dataset_id = "9178adde-31c8-11f0-93d6-4e7b67d53dad"
-        print(f"\nExporting dataset {dataset_id} to DataFrame...")
-        
-        dataset = client.get_dataset(dataset_id)
-        df = dataset.export_to_dataframe()
-        
-        if not df.empty:
-            print(f"\n=== Exported Dataset DataFrame ===")
-            print(f"Number of media items: {len(df)}")
-            print(f"Number of columns: {len(df.columns)}")
-            print(f"\nColumns: {list(df.columns)}")
-            print(f"\nFirst few rows:")
-            print(df.head())
-            
-            # Save to CSV
-            #csv_filename = f"dataset_{dataset_id}_media_items.csv"
-            #df.to_csv(csv_filename, index=False)
-            #print(f"\nSaved media items to {csv_filename}")
-        else:
-            print("No data to export")
-        print(df.iloc[0]['file_name'])
+
     except requests.exceptions.RequestException as e:
         print(f"\nError: {str(e)}")
     except Exception as e:
