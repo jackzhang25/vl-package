@@ -1,7 +1,9 @@
-from typing import Optional, List, Union
 from pathlib import Path
+from typing import List, Optional, Union
+
 from .client import VisualLayerClient
 from .exceptions import VisualLayerError
+
 
 class Dataset:
     def __init__(self, client: VisualLayerClient):
@@ -20,7 +22,7 @@ class Dataset:
         bucket_path: Optional[str] = None,
         uploaded_filename: Optional[str] = None,
         config_url: Optional[str] = None,
-        pipeline_type: Optional[str] = None
+        pipeline_type: Optional[str] = None,
     ) -> str:
         """
         Create a new dataset.
@@ -41,10 +43,8 @@ class Dataset:
         """
         try:
             # Create form data with required and optional parameters
-            form_data = {
-                "dataset_name": dataset_name
-            }
-            
+            form_data = {"dataset_name": dataset_name}
+
             # Add optional parameters if provided
             if vl_dataset_id is not None:
                 form_data["vl_dataset_id"] = vl_dataset_id
@@ -92,12 +92,9 @@ class Dataset:
                 if not path.exists():
                     raise VisualLayerError(f"Image file not found: {path}")
 
-                with open(path, 'rb') as f:
-                    files = {'file': (path.name, f)}
-                    self.client.post(
-                        f"/ingestion/{dataset_id}/data_files/{transaction_id}",
-                        files=files
-                    )
+                with open(path, "rb") as f:
+                    files = {"file": (path.name, f)}
+                    self.client.post(f"/ingestion/{dataset_id}/data_files/{transaction_id}", files=files)
 
             # Process the uploaded files
             self.client.post(f"/ingestion/{dataset_id}/process_files/{transaction_id}")
@@ -124,4 +121,4 @@ class Dataset:
             response = self.client.get(f"/ingestion/{dataset_id}/data_files/{transaction_id}")
             return response
         except Exception as e:
-            raise VisualLayerError(f"Failed to get upload status: {str(e)}") 
+            raise VisualLayerError(f"Failed to get upload status: {str(e)}")

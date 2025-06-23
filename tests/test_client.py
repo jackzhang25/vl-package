@@ -1,7 +1,5 @@
 """Tests for the VisualLayerClient."""
 
-import pytest
-from unittest.mock import Mock, patch
 from src.visual_layer_sdk.client import VisualLayerClient
 
 
