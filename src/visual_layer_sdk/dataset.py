@@ -1,124 +1,122 @@
-from pathlib import Path
-from typing import List, Optional, Union
-
-from .client import VisualLayerClient
-from .exceptions import VisualLayerError
+from uuid import UUID
+import requests
+from datetime import datetime, timezone, timedelta
+import jwt
+import os
+from dotenv import load_dotenv
+import pandas as pd
 
 
 class Dataset:
-    def __init__(self, client: VisualLayerClient):
-        """
-        Initialize the Dataset class.
-
-        Args:
-            client (VisualLayerClient): The Visual Layer API client instance.
-        """
+    # TODO: add id and name fields
+    def __init__(self, client, dataset_id: str):
         self.client = client
+        self.dataset_id = dataset_id
+        self.base_url = client.base_url
 
-    def create_dataset(
-        self,
-        dataset_name: str,
-        vl_dataset_id: Optional[str] = None,
-        bucket_path: Optional[str] = None,
-        uploaded_filename: Optional[str] = None,
-        config_url: Optional[str] = None,
-        pipeline_type: Optional[str] = None,
-    ) -> str:
+    def get_stats(self) -> dict:
+        """Get statistics for this dataset"""
+        response = self.client.session.get(
+            f"{self.base_url}/dataset/{self.dataset_id}/stats",
+            headers=self.client._get_headers(),
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def get_details(self) -> dict:
+        """Get details for this dataset"""
+        response = self.client.session.get(
+            f"{self.base_url}/dataset/{self.dataset_id}",
+            headers=self.client._get_headers(),
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def explore(self) -> pd.DataFrame:
+        """Explore this dataset and return previews as a DataFrame"""
+        response = self.client.session.get(
+            f"{self.base_url}/explore/{self.dataset_id}",
+            headers=self.client._get_headers(),
+        )
+        response.raise_for_status()
+        data = response.json()
+
+        # Extract just the previews from the first cluster
+        if data.get("clusters") and len(data["clusters"]) > 0:
+            previews = data["clusters"][0].get("previews", [])
+            # Convert previews to DataFrame
+            df = pd.DataFrame(previews)
+            return df
+        else:
+            return pd.DataFrame()  # Return empty DataFrame if no previews found
+
+    def delete(self) -> dict:
+        """Delete this dataset"""
+        response = self.client.session.delete(
+            f"{self.base_url}/dataset/{self.dataset_id}",
+            headers=self.client._get_headers(),
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def export(self) -> dict:
+        """Export this dataset in JSON format"""
+        # Check if dataset is ready before exporting
+        status = self.get_status()
+        if status not in ["READY", "completed"]:
+            raise RuntimeError(
+                f"Cannot export dataset {self.dataset_id}. Current status: {status}. Dataset must be 'ready' or 'completed' to export."
+            )
+
+        url = f"{self.base_url}/dataset/{self.dataset_id}/export"
+        params = {"export_format": "json"}
+        headers = {**self.client._get_headers()}
+        response = self.client.session.get(url, params=params, headers=headers)
+        response.raise_for_status()
+        return response.json()
+
+    def export_to_dataframe(self) -> pd.DataFrame:
         """
-        Create a new dataset.
-
-        Args:
-            dataset_name (str): Name of the dataset.
-            vl_dataset_id (Optional[str]): ID of a sample dataset to grant access to.
-            bucket_path (Optional[str]): Path to the bucket containing the dataset.
-            uploaded_filename (Optional[str]): Name of the uploaded file.
-            config_url (Optional[str]): URL to the configuration file.
-            pipeline_type (Optional[str]): Type of processing pipeline to use.
+        Export this dataset and convert media_items to a DataFrame.
 
         Returns:
-            str: The ID of the newly created dataset.
-
-        Raises:
-            VisualLayerError: If dataset creation fails.
+            pd.DataFrame: DataFrame containing media_items (excluding metadata_items)
         """
         try:
-            # Create form data with required and optional parameters
-            form_data = {"dataset_name": dataset_name}
+            # Check if dataset is ready before exporting
+            status = self.get_status()
+            if status not in ["READY", "completed"]:
+                print(
+                    f"Warning: Dataset {self.dataset_id} is not ready for export. Current status: {status}"
+                )
+                return pd.DataFrame()
 
-            # Add optional parameters if provided
-            if vl_dataset_id is not None:
-                form_data["vl_dataset_id"] = vl_dataset_id
-            if bucket_path is not None:
-                form_data["bucket_path"] = bucket_path
-            if uploaded_filename is not None:
-                form_data["uploaded_filename"] = uploaded_filename
-            if config_url is not None:
-                form_data["config_url"] = config_url
-            if pipeline_type is not None:
-                form_data["pipeline_type"] = pipeline_type
+            # Export the dataset
+            export_data = self.export()
 
-            # Send POST request with form data
-            response = self.client.post("/dataset", data=form_data)
-            return response["id"]
+            # Extract media_items from the export data
+            if "media_items" in export_data:
+                media_items = export_data["media_items"]
+
+                # Remove metadata_items from each media item if it exists
+                cleaned_media_items = []
+                for item in media_items:
+                    # Create a copy of the item without metadata_items
+                    cleaned_item = {
+                        k: v for k, v in item.items() if k != "metadata_items"
+                    }
+                    cleaned_media_items.append(cleaned_item)
+
+                # Convert to DataFrame
+                df = pd.DataFrame(cleaned_media_items)
+                return df
+            else:
+                print("No media_items found in export data")
+                return pd.DataFrame()
+
         except Exception as e:
-            raise VisualLayerError(f"Failed to create dataset: {str(e)}")
+            print(f"Error exporting dataset {self.dataset_id}: {str(e)}")
+            return pd.DataFrame()
 
-    def upload_images(self, dataset_id: str, image_paths: Union[str, Path, List[Union[str, Path]]]) -> str:
-        """
-        Upload images to a dataset.
-
-        Args:
-            dataset_id (str): The ID of the dataset to upload to.
-            image_paths (Union[str, Path, List[Union[str, Path]]]): Path or list of paths to images to upload.
-
-        Returns:
-            str: The transaction ID for the upload.
-
-        Raises:
-            VisualLayerError: If the upload fails.
-        """
-        try:
-            # Convert single path to list
-            if isinstance(image_paths, (str, Path)):
-                image_paths = [image_paths]
-
-            # Start upload transaction
-            response = self.client.post(f"/ingestion/{dataset_id}/data_files")
-            transaction_id = response["transaction_id"]
-
-            # Upload each image
-            for image_path in image_paths:
-                path = Path(image_path)
-                if not path.exists():
-                    raise VisualLayerError(f"Image file not found: {path}")
-
-                with open(path, "rb") as f:
-                    files = {"file": (path.name, f)}
-                    self.client.post(f"/ingestion/{dataset_id}/data_files/{transaction_id}", files=files)
-
-            # Process the uploaded files
-            self.client.post(f"/ingestion/{dataset_id}/process_files/{transaction_id}")
-
-            return transaction_id
-        except Exception as e:
-            raise VisualLayerError(f"Failed to upload images: {str(e)}")
-
-    def get_upload_status(self, dataset_id: str, transaction_id: str) -> dict:
-        """
-        Get the status of an upload transaction.
-
-        Args:
-            dataset_id (str): The ID of the dataset.
-            transaction_id (str): The transaction ID from the upload.
-
-        Returns:
-            dict: The status of the upload transaction.
-
-        Raises:
-            VisualLayerError: If getting the status fails.
-        """
-        try:
-            response = self.client.get(f"/ingestion/{dataset_id}/data_files/{transaction_id}")
-            return response
-        except Exception as e:
-            raise VisualLayerError(f"Failed to get upload status: {str(e)}")
+    def get_status(self) -> dict:
+        return self.get_details()["status"]

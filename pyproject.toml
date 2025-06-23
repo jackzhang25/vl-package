@@ -38,6 +38,11 @@ dev = [
     "pytest-cov>=4.0.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/yourusername/visual-layer-sdk"
+Repository = "https://github.com/yourusername/visual-layer-sdk"
+Documentation = "https://visual-layer-sdk.readthedocs.io"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
