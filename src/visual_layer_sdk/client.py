@@ -1,7 +1,9 @@
-import requests
-from typing import Any, Dict, Optional
-from .exceptions import VisualLayerError
 import json
+from typing import Any, Dict, Optional
+
+import requests
+
+from .exceptions import VisualLayerError
 
 
 class VisualLayerClient:
@@ -20,9 +22,7 @@ class VisualLayerClient:
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.session = requests.Session()
-        self.session.headers.update(
-            {"Authorization": f"Bearer {api_key}", "Accept": "application/json"}
-        )
+        self.session.headers.update({"Authorization": f"Bearer {api_key}", "Accept": "application/json"})
 
     def _make_request(self, method: str, endpoint: str, **kwargs) -> Dict[str, Any]:
         """
@@ -40,7 +40,7 @@ class VisualLayerClient:
             VisualLayerError: If the request fails
         """
         url = f"{self.base_url}{endpoint}"
-        print(f"\n=== API Request Details ===")
+        print("\n=== API Request Details ===")
         print(f"Method: {method}")
         print(f"URL: {url}")
         print(f"Base URL: {self.base_url}")
@@ -52,9 +52,7 @@ class VisualLayerClient:
             self.session.headers.update({"Content-Type": "application/json"})
         elif "data" in kwargs:
             print(f"Request body (form): {kwargs['data']}")
-            self.session.headers.update(
-                {"Content-Type": "application/x-www-form-urlencoded"}
-            )
+            self.session.headers.update({"Content-Type": "application/x-www-form-urlencoded"})
             # Convert data to form-urlencoded format
             if isinstance(kwargs["data"], dict):
                 kwargs["data"] = requests.compat.urlencode(kwargs["data"])
@@ -79,15 +77,11 @@ class VisualLayerClient:
             print(f"Error message: {str(e)}")
             if hasattr(e, "response"):
                 print(f"Error response status code: {e.response.status_code}")
-                print(
-                    f"Error response headers: {json.dumps(dict(e.response.headers), indent=2)}"
-                )
+                print(f"Error response headers: {json.dumps(dict(e.response.headers), indent=2)}")
                 print(f"Error response body: {e.response.text}")
             raise VisualLayerError(f"API request failed: {str(e)}")
 
-    def get(
-        self, endpoint: str, params: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
+    def get(self, endpoint: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         Make a GET request to the API.
 
@@ -142,9 +136,7 @@ class VisualLayerClient:
         """
         return self._make_request("PUT", endpoint, params=params, json=json, data=data)
 
-    def delete(
-        self, endpoint: str, params: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
+    def delete(self, endpoint: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         Make a DELETE request to the API.
 
