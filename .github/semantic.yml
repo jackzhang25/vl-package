@@ -1,0 +1,13 @@
+titleAndCommits: false
+types: |
+  fix
+  feat
+  chore
+  test
+scope:
+  - dataset
+  - client
+  - search
+  - docs
+requireScope: true
+allowMergeCommit: true
