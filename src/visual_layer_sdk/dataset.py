@@ -1,9 +1,3 @@
-from uuid import UUID
-import requests
-from datetime import datetime, timezone, timedelta
-import jwt
-import os
-from dotenv import load_dotenv
 import pandas as pd
 
 
@@ -64,9 +58,7 @@ class Dataset:
         # Check if dataset is ready before exporting
         status = self.get_status()
         if status not in ["READY", "completed"]:
-            raise RuntimeError(
-                f"Cannot export dataset {self.dataset_id}. Current status: {status}. Dataset must be 'ready' or 'completed' to export."
-            )
+            raise RuntimeError(f"Cannot export dataset {self.dataset_id}. Current status: {status}. Dataset must be 'ready' or 'completed' to export.")
 
         url = f"{self.base_url}/dataset/{self.dataset_id}/export"
         params = {"export_format": "json"}
@@ -86,9 +78,7 @@ class Dataset:
             # Check if dataset is ready before exporting
             status = self.get_status()
             if status not in ["READY", "completed"]:
-                print(
-                    f"Warning: Dataset {self.dataset_id} is not ready for export. Current status: {status}"
-                )
+                print(f"Warning: Dataset {self.dataset_id} is not ready for export. Current status: {status}")
                 return pd.DataFrame()
 
             # Export the dataset
@@ -102,9 +92,7 @@ class Dataset:
                 cleaned_media_items = []
                 for item in media_items:
                     # Create a copy of the item without metadata_items
-                    cleaned_item = {
-                        k: v for k, v in item.items() if k != "metadata_items"
-                    }
+                    cleaned_item = {k: v for k, v in item.items() if k != "metadata_items"}
                     cleaned_media_items.append(cleaned_item)
 
                 # Convert to DataFrame
