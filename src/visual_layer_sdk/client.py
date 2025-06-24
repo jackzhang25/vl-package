@@ -81,9 +81,7 @@ class VisualLayerClient:
 
     def healthcheck(self) -> dict:
         """Check the health of the API"""
-        response = self.session.get(
-            f"{self.base_url}/healthcheck", headers=self._get_headers()
-        )
+        response = self.session.get(f"{self.base_url}/healthcheck", headers=self._get_headers())
         response.raise_for_status()
         return response.json()
 
@@ -91,9 +89,7 @@ class VisualLayerClient:
     # TODO: return a dataframe instead of json
     def get_all_datasets(self) -> list:
         """Get all datasets"""
-        response = self.session.get(
-            f"{self.base_url}/datasets", headers=self._get_headers()
-        )
+        response = self.session.get(f"{self.base_url}/datasets", headers=self._get_headers())
         response.raise_for_status()
         return response.json()
 
@@ -104,9 +100,7 @@ class VisualLayerClient:
     # TODO: move to dataset.py
     def get_dataset_details_as_dataframe(self, dataset_id: str) -> pd.DataFrame:
         """Get dataset details as a DataFrame for the given ID"""
-        response = self.session.get(
-            f"{self.base_url}/dataset/{dataset_id}", headers=self._get_headers()
-        )
+        response = self.session.get(f"{self.base_url}/dataset/{dataset_id}", headers=self._get_headers())
         response.raise_for_status()
         dataset_details = response.json()
 
@@ -130,9 +124,7 @@ class VisualLayerClient:
         ]
 
         # Filter the dataset details to only include the selected fields
-        filtered_details = {
-            field: dataset_details.get(field) for field in selected_fields
-        }
+        filtered_details = {field: dataset_details.get(field) for field in selected_fields}
 
         # Convert to DataFrame with a single row
         df = pd.DataFrame([filtered_details])
@@ -143,9 +135,7 @@ class VisualLayerClient:
         return Dataset(self, dataset_id)
 
     # TODO: validate inputs
-    def create_dataset_from_s3_bucket(
-        self, s3_bucket_path: str, dataset_name: str, pipeline_type: str = None
-    ) -> dict:
+    def create_dataset_from_s3_bucket(self, s3_bucket_path: str, dataset_name: str, pipeline_type: str = None) -> dict:
         """
         Create a dataset from an S3 bucket.
 
@@ -200,23 +190,17 @@ class VisualLayerClient:
             result = response.json()
 
             if result.get("status") == "error":
-                raise requests.exceptions.RequestException(
-                    result.get("message", "Unknown error")
-                )
+                raise requests.exceptions.RequestException(result.get("message", "Unknown error"))
 
             return result
 
         except requests.exceptions.Timeout:
-            raise requests.exceptions.RequestException(
-                "Request timed out - dataset processing may take longer than expected"
-            )
+            raise requests.exceptions.RequestException("Request timed out - dataset processing may take longer than expected")
         except requests.exceptions.RequestException as e:
             if hasattr(e, "response") and e.response is not None:
                 try:
                     error_data = e.response.json()
-                    raise requests.exceptions.RequestException(
-                        error_data.get("message", str(e))
-                    )
+                    raise requests.exceptions.RequestException(error_data.get("message", str(e)))
                 except ValueError:
                     pass
             raise
@@ -279,15 +263,11 @@ class VisualLayerClient:
             result = response.json()
             print(result)
             if result.get("status") == "error":
-                raise requests.exceptions.RequestException(
-                    result.get("message", "Unknown error")
-                )
+                raise requests.exceptions.RequestException(result.get("message", "Unknown error"))
 
             dataset_id = result.get("id")
             if not dataset_id:
-                raise requests.exceptions.RequestException(
-                    "No dataset_id returned from creation"
-                )
+                raise requests.exceptions.RequestException("No dataset_id returned from creation")
 
             print(f"Dataset created with ID: {dataset_id}")
 
@@ -326,16 +306,12 @@ class VisualLayerClient:
                 return result
                 # TODO: return dataset object instead of dict
         except requests.exceptions.Timeout:
-            raise requests.exceptions.RequestException(
-                "Request timed out - dataset processing may take longer than expected"
-            )
+            raise requests.exceptions.RequestException("Request timed out - dataset processing may take longer than expected")
         except requests.exceptions.RequestException as e:
             if hasattr(e, "response") and e.response is not None:
                 try:
                     error_data = e.response.json()
-                    raise requests.exceptions.RequestException(
-                        error_data.get("message", str(e))
-                    )
+                    raise requests.exceptions.RequestException(error_data.get("message", str(e)))
                 except ValueError:
                     pass
             raise
@@ -354,9 +330,7 @@ def main():
 
     if not API_KEY or not API_SECRET:
         print("Error: API credentials not found in environment variables")
-        print(
-            "Please make sure VISUAL_LAYER_API_KEY and VISUAL_LAYER_API_SECRET are set in your .env file"
-        )
+        print("Please make sure VISUAL_LAYER_API_KEY and VISUAL_LAYER_API_SECRET are set in your .env file")
         return
 
     print("Initializing Visual Layer client...")
@@ -379,9 +353,7 @@ def main():
         print(f"Dataset name: {dataset_name}")
 
         try:
-            result = client.create_dataset_from_local_folder(
-                file_path, filename, dataset_name
-            )
+            result = client.create_dataset_from_local_folder(file_path, filename, dataset_name)
             print(f"\nDataset creation result: {result}")
 
             # If successful, get the dataset ID and test other operations
