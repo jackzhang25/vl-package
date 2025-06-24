@@ -4,8 +4,9 @@ from datetime import datetime, timedelta, timezone
 import jwt
 import pandas as pd
 import requests
-from .dataset import Dataset
 from dotenv import load_dotenv
+
+from .dataset import Dataset
 
 
 class VisualLayerClient:
