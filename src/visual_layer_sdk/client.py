@@ -1,11 +1,11 @@
-from uuid import UUID
-import requests
-from datetime import datetime, timezone, timedelta
-import jwt
 import os
-from dotenv import load_dotenv
+from datetime import datetime, timedelta, timezone
+
+import jwt
 import pandas as pd
-from dataset import Dataset
+import requests
+from .dataset import Dataset
+from dotenv import load_dotenv
 
 
 class VisualLayerClient:
@@ -293,7 +293,7 @@ class VisualLayerClient:
             # Step 2: Upload the zip file to the dataset
             upload_url = f"{self.base_url}/dataset/{dataset_id}/upload"
 
-            print(f"\n=== Step 2: Uploading Zip File ===")
+            print("\n=== Step 2: Uploading Zip File ===")
             print(f"Upload URL: {upload_url}")
             print(f"File path: {file_path}")
             print(f"Filename: {filename}")
@@ -390,7 +390,7 @@ def main():
 
                 # Get dataset details as DataFrame
                 dataset_df = client.get_dataset(dataset_id)
-                print(f"\nDataset details:")
+                print("\nDataset details:")
                 print(dataset_df.to_string(index=False))
 
                 # Save dataset details to CSV
