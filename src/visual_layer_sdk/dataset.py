@@ -1,4 +1,6 @@
 import pandas as pd
+import json
+from typing import List
 
 
 class Dataset:
@@ -24,7 +26,32 @@ class Dataset:
             headers=self.client._get_headers(),
         )
         response.raise_for_status()
-        return response.json()
+        full_response = response.json()
+
+        # Filter to only include the specified fields
+        selected_fields = [
+            "id",
+            "created_by",
+            "source_dataset_id",
+            "owned_by",
+            "display_name",
+            "description",
+            "preview_uri",
+            "source_type",
+            "source_uri",
+            "created_at",
+            "updated_at",
+            "filename",
+            "sample",
+            "status",
+        ]
+
+        # Create filtered dictionary with only the selected fields
+        filtered_details = {
+            field: full_response.get(field) for field in selected_fields
+        }
+
+        return filtered_details
 
     def explore(self) -> pd.DataFrame:
         """Explore this dataset and return previews as a DataFrame"""
@@ -44,6 +71,176 @@ class Dataset:
         else:
             return pd.DataFrame()  # Return empty DataFrame if no previews found
 
+    def search_by_captions(
+        self, caption_text: str, similarity_threshold: float = 0.83
+    ) -> pd.DataFrame:
+        """
+        Search dataset by AI-generated captions and return all images as a DataFrame.
+
+        Args:
+            caption_text (str): Text to search in captions
+            similarity_threshold (float): Threshold for semantic search (default: 0.83)
+
+        Returns:
+            pd.DataFrame: DataFrame containing all images from matching clusters
+        """
+        # If no caption text provided, return empty DataFrame
+        if not caption_text:
+            return pd.DataFrame()
+
+        # First, get the cluster IDs that match the caption filter
+        params = {
+            "verbose": "false",
+            "allow_deleted": "false",
+            "caption_only_filter": caption_text,
+        }
+
+        response = self.client.session.get(
+            f"{self.base_url}/explore/{self.dataset_id}",
+            params=params,
+            headers=self.client._get_headers(),
+        )
+        response.raise_for_status()
+        data = response.json()
+
+        # Extract cluster IDs
+        cluster_ids = []
+        if data.get("clusters"):
+            for cluster in data["clusters"]:
+                cluster_id = cluster.get("cluster_id")
+                if cluster_id:
+                    cluster_ids.append(cluster_id)
+
+        # Now get all images from each cluster
+        all_images = []
+        seen_image_ids = set()  # To prevent duplicates
+
+        for cluster_id in cluster_ids:
+            # Call the similarity cluster API for each cluster
+            # Pass the caption filter to get images that match the caption
+            cluster_params = {
+                "verbose": "true",
+                "allow_deleted": "false",
+                "caption_only_filter": caption_text,
+            }
+
+            cluster_response = self.client.session.get(
+                f"{self.base_url}/explore/{self.dataset_id}/similarity_cluster/{cluster_id}",
+                params=cluster_params,
+                headers=self.client._get_headers(),
+            )
+            cluster_response.raise_for_status()
+            cluster_data = cluster_response.json()
+
+            # Extract images from previews
+            if cluster_data.get("previews"):
+                for preview in cluster_data["previews"]:
+                    # Check for duplicates using image_id if available
+                    image_id = preview.get("image_id") or preview.get("id")
+                    if image_id and image_id in seen_image_ids:
+                        continue
+                    if image_id:
+                        seen_image_ids.add(image_id)
+
+                    # Create a copy of the preview to avoid modifying the original
+                    image_data = preview.copy()
+
+                    # Convert labels list to string if it exists
+                    if "labels" in image_data and isinstance(
+                        image_data["labels"], list
+                    ):
+                        image_data["labels"] = ", ".join(image_data["labels"])
+
+                    # Add cluster_id to each image
+                    image_data["cluster_id"] = cluster_id
+                    all_images.append(image_data)
+
+        # Convert to DataFrame
+        if all_images:
+            df = pd.DataFrame(all_images)
+            return df
+        else:
+            return pd.DataFrame()
+
+    def search_by_labels(self, labels: List[str]) -> pd.DataFrame:
+        """
+        Search dataset by labels and return all images as a DataFrame.
+
+        Args:
+            labels (List[str]): List of labels to search for, e.g., ["cat", "dog"]
+
+        Returns:
+            pd.DataFrame: DataFrame containing all images from matching clusters
+        """
+        # If no labels provided, return empty DataFrame
+        if not labels:
+            return pd.DataFrame()
+
+        # First, get the cluster IDs that match the labels
+        params = {"labels": json.dumps(labels)}
+
+        response = self.client.session.get(
+            f"{self.base_url}/explore/{self.dataset_id}",
+            params=params,
+            headers=self.client._get_headers(),
+        )
+        response.raise_for_status()
+        data = response.json()
+
+        # Extract cluster IDs
+        cluster_ids = []
+        if data.get("clusters"):
+            for cluster in data["clusters"]:
+                cluster_id = cluster.get("cluster_id")
+                if cluster_id:
+                    cluster_ids.append(cluster_id)
+
+        # Now get all images from each cluster
+        all_images = []
+        seen_image_ids = set()  # To prevent duplicates
+
+        for cluster_id in cluster_ids:
+            # Call the similarity cluster API for each cluster
+            # Pass the labels parameter to filter within the cluster
+            cluster_params = {"verbose": "true", "labels": json.dumps(labels)}
+
+            cluster_response = self.client.session.get(
+                f"{self.base_url}/explore/{self.dataset_id}/similarity_cluster/{cluster_id}",
+                params=cluster_params,
+                headers=self.client._get_headers(),
+            )
+            cluster_response.raise_for_status()
+            cluster_data = cluster_response.json()
+
+            # Extract images from previews (API already filtered by labels)
+            if cluster_data.get("previews"):
+                for preview in cluster_data["previews"]:
+                    # Check for duplicates using image_id if available
+                    image_id = preview.get("image_id") or preview.get("id")
+                    if image_id and image_id in seen_image_ids:
+                        continue
+                    if image_id:
+                        seen_image_ids.add(image_id)
+
+                    # Create a copy of the preview to avoid modifying the original
+                    image_data = preview.copy()
+
+                    # Convert labels list to string
+                    image_labels = preview.get("labels", [])
+                    if isinstance(image_labels, list):
+                        image_data["labels"] = ", ".join(image_labels)
+
+                    # Add cluster_id to each image
+                    image_data["cluster_id"] = cluster_id
+                    all_images.append(image_data)
+
+        # Convert to DataFrame
+        if all_images:
+            df = pd.DataFrame(all_images)
+            return df
+        else:
+            return pd.DataFrame()
+
     def delete(self) -> dict:
         """Delete this dataset"""
         response = self.client.session.delete(
@@ -61,6 +258,7 @@ class Dataset:
         response.raise_for_status()
         return response.json()
 
+    # include image_uri in export
     def export(self) -> dict:
         """Export this dataset in JSON format"""
         # Check if dataset is ready before exporting
