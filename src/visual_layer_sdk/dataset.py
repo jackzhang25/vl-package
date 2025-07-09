@@ -2,6 +2,8 @@ import pandas as pd
 import json
 from typing import List
 
+from .logger import get_logger
+
 
 class Dataset:
     # TODO: add id and name fields
@@ -9,6 +11,7 @@ class Dataset:
         self.client = client
         self.dataset_id = dataset_id
         self.base_url = client.base_url
+        self.logger = get_logger()
 
     def get_stats(self) -> dict:
         """Get statistics for this dataset"""
@@ -47,9 +50,7 @@ class Dataset:
         ]
 
         # Create filtered dictionary with only the selected fields
-        filtered_details = {
-            field: full_response.get(field) for field in selected_fields
-        }
+        filtered_details = {field: full_response.get(field) for field in selected_fields}
 
         return filtered_details
 
@@ -71,9 +72,7 @@ class Dataset:
         else:
             return pd.DataFrame()  # Return empty DataFrame if no previews found
 
-    def search_by_captions(
-        self, caption_text: str, similarity_threshold: float = 0.83
-    ) -> pd.DataFrame:
+    def search_by_captions(self, caption_text: str, similarity_threshold: float = 0.83) -> pd.DataFrame:
         """
         Search dataset by AI-generated captions and return all images as a DataFrame.
 
@@ -84,78 +83,74 @@ class Dataset:
         Returns:
             pd.DataFrame: DataFrame containing all images from matching clusters
         """
-        # If no caption text provided, return empty DataFrame
         if not caption_text:
             return pd.DataFrame()
 
-        # First, get the cluster IDs that match the caption filter
-        params = {
-            "verbose": "false",
-            "allow_deleted": "false",
-            "caption_only_filter": caption_text,
-        }
-
-        response = self.client.session.get(
-            f"{self.base_url}/explore/{self.dataset_id}",
-            params=params,
-            headers=self.client._get_headers(),
-        )
-        response.raise_for_status()
-        data = response.json()
-
-        # Extract cluster IDs
+        # --- Paginate cluster retrieval ---
         cluster_ids = []
-        if data.get("clusters"):
-            for cluster in data["clusters"]:
-                cluster_id = cluster.get("cluster_id")
-                if cluster_id:
-                    cluster_ids.append(cluster_id)
-
-        # Now get all images from each cluster
-        all_images = []
-        seen_image_ids = set()  # To prevent duplicates
-
-        for cluster_id in cluster_ids:
-            # Call the similarity cluster API for each cluster
-            # Pass the caption filter to get images that match the caption
-            cluster_params = {
-                "verbose": "true",
+        all_cluster_ids = set()
+        page_number = 0
+        while True:
+            params = {
+                "verbose": "false",
                 "allow_deleted": "false",
                 "caption_only_filter": caption_text,
+                "page_number": page_number,
             }
-
-            cluster_response = self.client.session.get(
-                f"{self.base_url}/explore/{self.dataset_id}/similarity_cluster/{cluster_id}",
-                params=cluster_params,
+            response = self.client.session.get(
+                f"{self.base_url}/explore/{self.dataset_id}",
+                params=params,
                 headers=self.client._get_headers(),
             )
-            cluster_response.raise_for_status()
-            cluster_data = cluster_response.json()
+            response.raise_for_status()
+            data = response.json()
+            clusters = data.get("clusters", [])
+            if not clusters:
+                break
+            for cluster in clusters:
+                cluster_id = cluster.get("cluster_id")
+                if cluster_id and cluster_id not in all_cluster_ids:
+                    cluster_ids.append(cluster_id)
+                    all_cluster_ids.add(cluster_id)
+            page_number += 1
 
-            # Extract images from previews
-            if cluster_data.get("previews"):
-                for preview in cluster_data["previews"]:
-                    # Check for duplicates using image_id if available
+        # --- Paginate image retrieval for each cluster ---
+        all_images = []
+        seen_image_ids = set()  # To prevent duplicates
+        for cluster_id in cluster_ids:
+            page_number = 0
+            while True:
+                cluster_params = {
+                    "verbose": "true",
+                    "allow_deleted": "false",
+                    "caption_only_filter": caption_text,
+                    "page_number": page_number,
+                }
+                cluster_response = self.client.session.get(
+                    f"{self.base_url}/explore/{self.dataset_id}/similarity_cluster/{cluster_id}",
+                    params=cluster_params,
+                    headers=self.client._get_headers(),
+                )
+                cluster_response.raise_for_status()
+                cluster_data = cluster_response.json()
+                if cluster_data is None:
+                    break
+                previews = cluster_data.get("previews", [])
+                if not previews:
+                    break
+                for preview in previews:
                     image_id = preview.get("image_id") or preview.get("id")
                     if image_id and image_id in seen_image_ids:
                         continue
                     if image_id:
                         seen_image_ids.add(image_id)
-
-                    # Create a copy of the preview to avoid modifying the original
                     image_data = preview.copy()
-
-                    # Convert labels list to string if it exists
-                    if "labels" in image_data and isinstance(
-                        image_data["labels"], list
-                    ):
+                    if "labels" in image_data and isinstance(image_data["labels"], list):
                         image_data["labels"] = ", ".join(image_data["labels"])
-
-                    # Add cluster_id to each image
                     image_data["cluster_id"] = cluster_id
                     all_images.append(image_data)
+                page_number += 1
 
-        # Convert to DataFrame
         if all_images:
             df = pd.DataFrame(all_images)
             return df
@@ -172,69 +167,65 @@ class Dataset:
         Returns:
             pd.DataFrame: DataFrame containing all images from matching clusters
         """
-        # If no labels provided, return empty DataFrame
         if not labels:
             return pd.DataFrame()
 
-        # First, get the cluster IDs that match the labels
-        params = {"labels": json.dumps(labels)}
-
-        response = self.client.session.get(
-            f"{self.base_url}/explore/{self.dataset_id}",
-            params=params,
-            headers=self.client._get_headers(),
-        )
-        response.raise_for_status()
-        data = response.json()
-
-        # Extract cluster IDs
+        # --- Paginate cluster retrieval ---
         cluster_ids = []
-        if data.get("clusters"):
-            for cluster in data["clusters"]:
-                cluster_id = cluster.get("cluster_id")
-                if cluster_id:
-                    cluster_ids.append(cluster_id)
-
-        # Now get all images from each cluster
-        all_images = []
-        seen_image_ids = set()  # To prevent duplicates
-
-        for cluster_id in cluster_ids:
-            # Call the similarity cluster API for each cluster
-            # Pass the labels parameter to filter within the cluster
-            cluster_params = {"verbose": "true", "labels": json.dumps(labels)}
-
-            cluster_response = self.client.session.get(
-                f"{self.base_url}/explore/{self.dataset_id}/similarity_cluster/{cluster_id}",
-                params=cluster_params,
+        all_cluster_ids = set()
+        page_number = 0
+        while True:
+            params = {"labels": json.dumps(labels), "page_number": page_number}
+            response = self.client.session.get(
+                f"{self.base_url}/explore/{self.dataset_id}",
+                params=params,
                 headers=self.client._get_headers(),
             )
-            cluster_response.raise_for_status()
-            cluster_data = cluster_response.json()
+            response.raise_for_status()
+            data = response.json()
+            clusters = data.get("clusters", [])
+            if not clusters:
+                break
+            for cluster in clusters:
+                cluster_id = cluster.get("cluster_id")
+                if cluster_id and cluster_id not in all_cluster_ids:
+                    cluster_ids.append(cluster_id)
+                    all_cluster_ids.add(cluster_id)
+            page_number += 1
 
-            # Extract images from previews (API already filtered by labels)
-            if cluster_data.get("previews"):
-                for preview in cluster_data["previews"]:
-                    # Check for duplicates using image_id if available
+        # --- Paginate image retrieval for each cluster ---
+        all_images = []
+        seen_image_ids = set()
+        for cluster_id in cluster_ids:
+            page_number = 0
+            while True:
+                cluster_params = {"verbose": "true", "labels": json.dumps(labels), "page_number": page_number}
+                cluster_response = self.client.session.get(
+                    f"{self.base_url}/explore/{self.dataset_id}/similarity_cluster/{cluster_id}",
+                    params=cluster_params,
+                    headers=self.client._get_headers(),
+                )
+                cluster_response.raise_for_status()
+                cluster_data = cluster_response.json()
+                if cluster_data is None:
+                    break
+                previews = cluster_data.get("previews", [])
+                if not previews:
+                    break
+                for preview in previews:
                     image_id = preview.get("image_id") or preview.get("id")
                     if image_id and image_id in seen_image_ids:
                         continue
                     if image_id:
                         seen_image_ids.add(image_id)
-
-                    # Create a copy of the preview to avoid modifying the original
                     image_data = preview.copy()
-
-                    # Convert labels list to string
                     image_labels = preview.get("labels", [])
                     if isinstance(image_labels, list):
                         image_data["labels"] = ", ".join(image_labels)
-
-                    # Add cluster_id to each image
                     image_data["cluster_id"] = cluster_id
                     all_images.append(image_data)
+                page_number += 1
 
-        # Convert to DataFrame
         if all_images:
             df = pd.DataFrame(all_images)
             return df
@@ -264,9 +255,7 @@ class Dataset:
         # Check if dataset is ready before exporting
         status = self.get_status()
         if status not in ["READY", "completed"]:
-            raise RuntimeError(
-                f"Cannot export dataset {self.dataset_id}. Current status: {status}. Dataset must be 'ready' or 'completed' to export."
-            )
+            raise RuntimeError(f"Cannot export dataset {self.dataset_id}. Current status: {status}. Dataset must be 'ready' or 'completed' to export.")
 
         url = f"{self.base_url}/dataset/{self.dataset_id}/export"
         params = {"export_format": "json"}
@@ -286,9 +275,7 @@ class Dataset:
             # Check if dataset is ready before exporting
             status = self.get_status()
             if status not in ["READY", "completed"]:
-                print(
-                    f"Warning: Dataset {self.dataset_id} is not ready for export. Current status: {status}"
-                )
+                self.logger.dataset_not_ready(self.dataset_id, status)
                 return pd.DataFrame()
 
             # Export the dataset
@@ -302,20 +289,19 @@ class Dataset:
                 cleaned_media_items = []
                 for item in media_items:
                     # Create a copy of the item without metadata_items
-                    cleaned_item = {
-                        k: v for k, v in item.items() if k != "metadata_items"
-                    }
+                    cleaned_item = {k: v for k, v in item.items() if k != "metadata_items"}
                     cleaned_media_items.append(cleaned_item)
 
                 # Convert to DataFrame
                 df = pd.DataFrame(cleaned_media_items)
+                self.logger.export_completed(self.dataset_id, len(df))
                 return df
             else:
-                print("No media_items found in export data")
+                self.logger.warning("No media_items found in export data")
                 return pd.DataFrame()
 
         except Exception as e:
-            print(f"Error exporting dataset {self.dataset_id}: {str(e)}")
+            self.logger.export_failed(self.dataset_id, str(e))
             return pd.DataFrame()
 
     def get_status(self) -> dict:
