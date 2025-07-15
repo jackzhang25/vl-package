@@ -22,8 +22,11 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+
+# Prompting
 swagger.json
 prompt
+
 # Virtual Environment
 venv/
 ENV/
