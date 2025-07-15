@@ -306,3 +306,276 @@ class Dataset:
 
     def get_status(self) -> dict:
         return self.get_details()["status"]
+
+    def search_by_captions_async(self, caption_text: str, similarity_threshold: float = 0.83) -> dict:
+        """
+        Search dataset by AI-generated captions using the export_context_async endpoint.
+        Returns the export task ID for polling status.
+
+        Args:
+            caption_text (str): Text to search in captions
+            similarity_threshold (float): Threshold for semantic search (default: 0.83)
+
+        Returns:
+            dict: Export task response with task ID
+        """
+        if not caption_text:
+            self.logger.warning("No caption text provided")
+            return {}
+
+        url = f"{self.base_url}/dataset/{self.dataset_id}/export_context_async"
+
+        params = {"export_format": "json", "include_images": False, "caption_only_filter": caption_text}
+
+        try:
+            self.logger.info(f"Searching captions for: '{caption_text}' with threshold: {similarity_threshold}")
+            self.logger.info(f"API URL: {url}")
+            self.logger.info(f"API Parameters: {params}")
+
+            response = self.client.session.get(url, headers=self.client._get_headers(), params=params)
+            response.raise_for_status()
+
+            result = response.json()
+
+            # Print raw API response
+            print(f"\n📄 RAW API RESPONSE for caption search:")
+            print(f"Response type: {type(result)}")
+            print(f"Response keys: {list(result.keys()) if isinstance(result, dict) else 'Not a dict'}")
+            print(f"Full response: {json.dumps(result, indent=2)}")
+
+            self.logger.success(f"Caption search export task created successfully")
+            return result
+
+        except Exception as e:
+            self.logger.error(f"Caption search failed: {str(e)}")
+            raise
+
+    def search_by_labels_async(self, labels: List[str]) -> dict:
+        """
+        Search dataset by labels using the export_context_async endpoint, then poll export_status.
+        Returns the export status response (including download_uri if ready).
+
+        Args:
+            labels (List[str]): List of labels to search for, e.g., ["cat", "dog"]
+
+        Returns:
+            dict: Export status response with progress, status, and download_uri
+        """
+        if not labels:
+            self.logger.warning("No labels provided")
+            return {}
+
+        # Step 1: Start export task
+        url_context = f"{self.base_url}/dataset/{self.dataset_id}/export_context_async"
+        params = {"export_format": "json", "include_images": False, "labels": json.dumps(labels)}
+
+        try:
+            self.logger.info(f"Starting label search export task: {labels}")
+            response = self.client.session.get(url_context, headers=self.client._get_headers(), params=params)
+            response.raise_for_status()
+            result = response.json()
+            self.logger.success(f"Label search export task created successfully")
+        except Exception as e:
+            self.logger.error(f"Label search export_context_async failed: {str(e)}")
+            raise
+
+        # Step 2: Poll export status
+        export_task_id = result.get("id")
+        if not export_task_id:
+            self.logger.error("No export_task_id returned from export_context_async")
+            return {}
+
+        url_status = f"{self.base_url}/dataset/{self.dataset_id}/export_status"
+        status_params = {"export_task_id": export_task_id, "dataset_id": self.dataset_id}
+        try:
+            self.logger.info(f"Polling export status for task: {export_task_id}")
+            status_response = self.client.session.get(url_status, headers=self.client._get_headers(), params=status_params)
+            status_response.raise_for_status()
+            status_result = status_response.json()
+            self.logger.success(f"Export status checked successfully")
+            return status_result
+        except Exception as e:
+            self.logger.error(f"Export status check failed: {str(e)}")
+            raise
+
+    def process_export_download_to_dataframe(self, download_uri: str) -> pd.DataFrame:
+        """
+        Download the export results from the provided URI and flatten to a DataFrame.
+        Can be used by any async search function that returns a download_uri.
+
+        Args:
+            download_uri (str): The download URI from the export status response
+
+        Returns:
+            pd.DataFrame: DataFrame containing the search results, or empty if not valid
+        """
+        # Download and process the export results
+        export_data = self.download_export_results(download_uri)
+        if not export_data or "media_items" not in export_data:
+            self.logger.warning("No media_items found in downloaded export data")
+            return pd.DataFrame()
+
+        # Flatten to DataFrame (reuse export_to_dataframe logic)
+        processed_items = []
+        for item in export_data["media_items"]:
+            processed_item = item.copy()
+            metadata_items = item.get("metadata_items", [])
+            processed_item["captions"] = []
+            processed_item["image_labels"] = []
+            processed_item["object_labels"] = []
+            processed_item["issues"] = []
+            for metadata in metadata_items:
+                metadata_type = metadata.get("type")
+                properties = metadata.get("properties", {})
+                if metadata_type == "caption":
+                    caption = properties.get("caption", "")
+                    if caption:
+                        processed_item["captions"].append(caption)
+                elif metadata_type == "image_label":
+                    category = properties.get("category_name", "")
+                    source = properties.get("source", "")
+                    if category:
+                        processed_item["image_labels"].append(f"{category}({source})")
+                elif metadata_type == "object_label":
+                    category = properties.get("category_name", "")
+                    bbox = properties.get("bbox", [])
+                    if category:
+                        processed_item["object_labels"].append(f"{category}{bbox}")
+                elif metadata_type == "issue":
+                    issue_type = properties.get("issue_type", "")
+                    description = properties.get("issues_description", "")
+                    confidence = properties.get("confidence", 0.0)
+                    if issue_type:
+                        processed_item["issues"].append(f"{issue_type}:{description}({confidence:.3f})")
+            processed_item["captions"] = "; ".join(processed_item["captions"])
+            processed_item["image_labels"] = "; ".join(processed_item["image_labels"])
+            processed_item["object_labels"] = "; ".join(processed_item["object_labels"])
+            processed_item["issues"] = "; ".join(processed_item["issues"])
+            processed_item.pop("metadata_items", None)
+            processed_items.append(processed_item)
+
+        df = pd.DataFrame(processed_items)
+        self.logger.export_completed(self.dataset_id, len(df))
+        return df
+
+    def search_by_labels_async_to_dataframe(self, labels: List[str], poll_interval: int = 10, timeout: int = 300) -> pd.DataFrame:
+        """
+        Search dataset by labels asynchronously, poll until export is ready, download the results, and return as a DataFrame.
+
+        Args:
+            labels (List[str]): List of labels to search for
+            poll_interval (int): Seconds to wait between status polls (default: 10)
+            timeout (int): Maximum seconds to wait for export to complete (default: 300)
+
+        Returns:
+            pd.DataFrame: DataFrame containing the search results, or empty if not ready
+        """
+        import time
+
+        start_time = time.time()
+
+        # Step 1: Start async search and get initial status
+        status_result = self.search_by_labels_async(labels)
+        download_uri = status_result.get("download_uri")
+        status = status_result.get("status")
+        export_task_id = status_result.get("id")
+
+        # Poll if not ready
+        while (status != "COMPLETED" or not download_uri) and (time.time() - start_time < timeout):
+            self.logger.info(f"Export not ready (status: {status}). Waiting {poll_interval}s before polling again...")
+            time.sleep(poll_interval)
+            # Poll status endpoint
+            poll_status = self.client.session.get(
+                f"{self.client.base_url}/dataset/{self.dataset_id}/export_status",
+                headers=self.client._get_headers(),
+                params={"export_task_id": export_task_id, "dataset_id": self.dataset_id},
+            )
+            poll_status.raise_for_status()
+            status_result = poll_status.json()
+            download_uri = status_result.get("download_uri")
+            status = status_result.get("status")
+
+        if status != "COMPLETED" or not download_uri:
+            self.logger.warning(f"Export not completed or no download_uri after waiting. Final status: {status}")
+            return pd.DataFrame()
+
+        # Step 2: Use the general processor
+        return self.process_export_download_to_dataframe(download_uri)
+
+    def download_export_results(self, download_uri: str) -> dict:
+        """
+        Download the export results from the provided URI.
+        Handles both ZIP (with JSON inside) and direct JSON responses.
+
+        Args:
+            download_uri (str): The download URI from the export status response
+
+        Returns:
+            dict: The downloaded export data (parsed from JSON inside ZIP if needed)
+        """
+        import io
+        import zipfile
+
+        try:
+            self.logger.info(f"Downloading export results from: {download_uri}")
+            response = self.client.session.get(download_uri)
+            response.raise_for_status()
+
+            content_type = response.headers.get("content-type", "")
+            self.logger.debug(f"Response content type: {content_type}")
+            self.logger.debug(f"Response status code: {response.status_code}")
+            self.logger.debug(f"Response size: {len(response.content)} bytes")
+
+            # Try ZIP extraction first (since we know it works)
+            self.logger.info("Attempting ZIP extraction...")
+            try:
+                with zipfile.ZipFile(io.BytesIO(response.content)) as zf:
+                    self.logger.debug(f"ZIP contents: {zf.namelist()}")
+
+                    # Look specifically for metadata.json
+                    if "metadata.json" in zf.namelist():
+                        self.logger.info("Found metadata.json")
+                        with zf.open("metadata.json") as json_file:
+                            json_bytes = json_file.read()
+                            json_str = json_bytes.decode("utf-8")
+                            result = json.loads(json_str)
+                            self.logger.info(f"Successfully extracted and parsed JSON")
+                            self.logger.debug(f"JSON keys: {list(result.keys())}")
+                            if "media_items" in result:
+                                self.logger.info(f"Number of media items: {len(result['media_items'])}")
+                            self.logger.success(f"Export results downloaded and extracted from ZIP successfully")
+                            return result
+                    else:
+                        self.logger.warning("metadata.json not found")
+                        self.logger.debug(f"Available files: {zf.namelist()}")
+                        raise ValueError("metadata.json not found in ZIP archive.")
+
+            except Exception as zip_error:
+                self.logger.warning(f"ZIP extraction failed: {str(zip_error)}")
+                # Fall through to try JSON parsing
+
+            # If ZIP extraction failed, try JSON parsing
+            if "application/json" in content_type:
+                result = response.json()
+                self.logger.debug(f"Parsed as JSON")
+                self.logger.debug(f"Response keys: {list(result.keys()) if isinstance(result, dict) else 'Not a dict'}")
+                self.logger.success(f"Export results downloaded successfully")
+                return result
+            else:
+                # Handle non-JSON responses (like text)
+                self.logger.debug(f"Content type: {content_type}")
+                self.logger.debug(f"Response size: {len(response.content)} bytes")
+                # Try to parse as JSON anyway (in case content-type is wrong)
+                try:
+                    result = response.json()
+                    self.logger.info("Successfully parsed as JSON")
+                    self.logger.debug(f"Response keys: {list(result.keys()) if isinstance(result, dict) else 'Not a dict'}")
+                except Exception as json_error:
+                    self.logger.warning(f"Failed to parse as JSON: {str(json_error)}")
+                    result = {"content_type": content_type, "size_bytes": len(response.content), "raw_text": response.text[:1000], "error": "Response is not valid JSON"}
+                self.logger.success(f"Export results downloaded (non-JSON fallback)")
+                return result
+
+        except Exception as e:
+            self.logger.error(f"Export download failed: {str(e)}")
+            raise
