@@ -214,6 +214,51 @@ Delete the dataset permanently.
 result = dataset.delete()
 ```
 
+##### `search_by_labels_to_dataframe(labels: List[str], operators: SearchOperator = SearchOperator.IS_ONE_OF, poll_interval: int = 10, timeout: int = 300) -> pd.DataFrame`
+Search the dataset by labels asynchronously, poll until export is ready, download the results, and return as a DataFrame.
+
+```python
+from visual_layer_sdk.dataset import SearchOperator
+labels = ["cat", "dog"]
+df = dataset.search_by_labels_to_dataframe(labels, operators=SearchOperator.IS_ONE_OF)
+```
+
+- `labels` (List[str]): List of labels to search for
+- `operators` (SearchOperator): Search operator (default: SearchOperator.IS_ONE_OF)
+- `poll_interval` (int): Seconds to wait between status polls (default: 10)
+- `timeout` (int): Maximum seconds to wait for export to complete (default: 300)
+
+**Returns:** DataFrame containing the search results, or empty if not ready or no matches found.
+
+##### `search_by_captions_to_dataframe(caption_text: List[str], operators: SearchOperator = SearchOperator.IS_ONE_OF, poll_interval: int = 10, timeout: int = 300) -> pd.DataFrame`
+Search the dataset by captions asynchronously, poll until export is ready, download the results, and return as a DataFrame.
+
+```python
+from visual_layer_sdk.dataset import SearchOperator
+df = dataset.search_by_captions_to_dataframe(["cat", "sitting", "outdoors"], operators=SearchOperator.IS_ONE_OF)
+```
+
+- `caption_text` (List[str]): List of text strings to search in captions (these will be combined into a single search string)
+- `operators` (SearchOperator): Search operator (default: SearchOperator.IS_ONE_OF)
+- `poll_interval` (int): Seconds to wait between status polls (default: 10)
+- `timeout` (int): Maximum seconds to wait for export to complete (default: 300)
+
+**Returns:** DataFrame containing the search results, or empty if not ready or no matches found.
+
+##### `SearchOperator` Enum
+The `operators` parameter for both methods uses the `SearchOperator` enum:
+
+```python
+from visual_layer_sdk.dataset import SearchOperator
+
+SearchOperator.IS           # "is"
+SearchOperator.IS_NOT       # "is not"
+SearchOperator.IS_ONE_OF    # "is one of"
+SearchOperator.IS_NOT_ONE_OF # "is not one of"
+```
+
+Currently, only `SearchOperator.IS_ONE_OF` is supported.
+
 ## Complete Example
 
 ```python

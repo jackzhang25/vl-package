@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="visual_layer_sdk",
-    version="0.1.5",
+    version="0.1.7",
     packages=find_packages(where="src"),
     package_dir={"": "src"},
     install_requires=[

@@ -1,8 +1,29 @@
 import pandas as pd
 import json
 from typing import List
+from enum import Enum
 
 from .logger import get_logger
+
+
+class SearchOperator(Enum):
+    IS = "is"
+    IS_NOT = "is not"
+    IS_ONE_OF = "is one of"
+    IS_NOT_ONE_OF = "is not one of"
+
+
+ISSUE_TYPE_MAPPING = {
+    0: {"name": "mislabels", "description": "Mislabeled items", "severity": 0},
+    1: {"name": "outliers", "description": "Outlier detection", "severity": 0},
+    2: {"name": "duplicates", "description": "Duplicate detection", "severity": 0},
+    3: {"name": "blur", "description": "Blurry images", "severity": 1},
+    4: {"name": "dark", "description": "Dark images", "severity": 1},
+    5: {"name": "bright", "description": "Bright images", "severity": 2},
+    6: {"name": "normal", "description": "Normal images", "severity": 0},
+    7: {"name": "label_outlier", "description": "Label outliers", "severity": 0},
+}
+ALLOWED_ISSUE_NAMES = {v["name"] for v in ISSUE_TYPE_MAPPING.values()}
 
 
 class Dataset:
@@ -12,6 +33,37 @@ class Dataset:
         self.dataset_id = dataset_id
         self.base_url = client.base_url
         self.logger = get_logger()
+
+        # Validate that the dataset exists
+        self._validate_dataset_exists()
+
+    def _validate_dataset_exists(self):
+        """Validate that the dataset exists by calling the get_details API"""
+        try:
+            response = self.client.session.get(
+                f"{self.base_url}/dataset/{self.dataset_id}",
+                headers=self.client._get_headers(),
+            )
+            response.raise_for_status()
+        except Exception as e:
+            if "Not Found" in str(e) or response.status_code == 404:
+                raise ValueError(f"Dataset '{self.dataset_id}' does not exist. Please check the dataset ID and try again.")
+            else:
+                raise RuntimeError(f"Failed to validate dataset '{self.dataset_id}': {str(e)}")
+
+    def __str__(self) -> str:
+        """String representation of the dataset with its details"""
+        try:
+            details = self.get_details()
+            status = details.get("status", "Unknown")
+            display_name = details.get("display_name", "No name")
+            description = details.get("description", "No description")
+            created_at = details.get("created_at", "Unknown")
+            filename = details.get("filename", "me")
+
+            return f"Dataset(id='{self.dataset_id}', name='{display_name}', status='{status}', filename='{filename}', created_at='{created_at}', description={description})"
+        except Exception as e:
+            return f"Dataset(id='{self.dataset_id}', error='{str(e)}')"
 
     def get_stats(self) -> dict:
         """Get statistics for this dataset"""
@@ -71,166 +123,6 @@ class Dataset:
             return df
         else:
             return pd.DataFrame()  # Return empty DataFrame if no previews found
-
-    def search_by_captions(self, caption_text: str, similarity_threshold: float = 0.83) -> pd.DataFrame:
-        """
-        Search dataset by AI-generated captions and return all images as a DataFrame.
-
-        Args:
-            caption_text (str): Text to search in captions
-            similarity_threshold (float): Threshold for semantic search (default: 0.83)
-
-        Returns:
-            pd.DataFrame: DataFrame containing all images from matching clusters
-        """
-        if not caption_text:
-            return pd.DataFrame()
-
-        # --- Paginate cluster retrieval ---
-        cluster_ids = []
-        all_cluster_ids = set()
-        page_number = 0
-        while True:
-            params = {
-                "verbose": "false",
-                "allow_deleted": "false",
-                "caption_only_filter": caption_text,
-                "page_number": page_number,
-            }
-            response = self.client.session.get(
-                f"{self.base_url}/explore/{self.dataset_id}",
-                params=params,
-                headers=self.client._get_headers(),
-            )
-            response.raise_for_status()
-            data = response.json()
-            clusters = data.get("clusters", [])
-            if not clusters:
-                break
-            for cluster in clusters:
-                cluster_id = cluster.get("cluster_id")
-                if cluster_id and cluster_id not in all_cluster_ids:
-                    cluster_ids.append(cluster_id)
-                    all_cluster_ids.add(cluster_id)
-            page_number += 1
-
-        # --- Paginate image retrieval for each cluster ---
-        all_images = []
-        seen_image_ids = set()  # To prevent duplicates
-        for cluster_id in cluster_ids:
-            page_number = 0
-            while True:
-                cluster_params = {
-                    "verbose": "true",
-                    "allow_deleted": "false",
-                    "caption_only_filter": caption_text,
-                    "page_number": page_number,
-                }
-                cluster_response = self.client.session.get(
-                    f"{self.base_url}/explore/{self.dataset_id}/similarity_cluster/{cluster_id}",
-                    params=cluster_params,
-                    headers=self.client._get_headers(),
-                )
-                cluster_response.raise_for_status()
-                cluster_data = cluster_response.json()
-                if cluster_data is None:
-                    break
-                previews = cluster_data.get("previews", [])
-                if not previews:
-                    break
-                for preview in previews:
-                    image_id = preview.get("image_id") or preview.get("id")
-                    if image_id and image_id in seen_image_ids:
-                        continue
-                    if image_id:
-                        seen_image_ids.add(image_id)
-                    image_data = preview.copy()
-                    if "labels" in image_data and isinstance(image_data["labels"], list):
-                        image_data["labels"] = ", ".join(image_data["labels"])
-                    image_data["cluster_id"] = cluster_id
-                    all_images.append(image_data)
-                page_number += 1
-
-        if all_images:
-            df = pd.DataFrame(all_images)
-            return df
-        else:
-            return pd.DataFrame()
-
-    def search_by_labels(self, labels: List[str]) -> pd.DataFrame:
-        """
-        Search dataset by labels and return all images as a DataFrame.
-
-        Args:
-            labels (List[str]): List of labels to search for, e.g., ["cat", "dog"]
-
-        Returns:
-            pd.DataFrame: DataFrame containing all images from matching clusters
-        """
-        if not labels:
-            return pd.DataFrame()
-
-        # --- Paginate cluster retrieval ---
-        cluster_ids = []
-        all_cluster_ids = set()
-        page_number = 0
-        while True:
-            params = {"labels": json.dumps(labels), "page_number": page_number}
-            response = self.client.session.get(
-                f"{self.base_url}/explore/{self.dataset_id}",
-                params=params,
-                headers=self.client._get_headers(),
-            )
-            response.raise_for_status()
-            data = response.json()
-            clusters = data.get("clusters", [])
-            if not clusters:
-                break
-            for cluster in clusters:
-                cluster_id = cluster.get("cluster_id")
-                if cluster_id and cluster_id not in all_cluster_ids:
-                    cluster_ids.append(cluster_id)
-                    all_cluster_ids.add(cluster_id)
-            page_number += 1
-
-        # --- Paginate image retrieval for each cluster ---
-        all_images = []
-        seen_image_ids = set()
-        for cluster_id in cluster_ids:
-            page_number = 0
-            while True:
-                cluster_params = {"verbose": "true", "labels": json.dumps(labels), "page_number": page_number}
-                cluster_response = self.client.session.get(
-                    f"{self.base_url}/explore/{self.dataset_id}/similarity_cluster/{cluster_id}",
-                    params=cluster_params,
-                    headers=self.client._get_headers(),
-                )
-                cluster_response.raise_for_status()
-                cluster_data = cluster_response.json()
-                if cluster_data is None:
-                    break
-                previews = cluster_data.get("previews", [])
-                if not previews:
-                    break
-                for preview in previews:
-                    image_id = preview.get("image_id") or preview.get("id")
-                    if image_id and image_id in seen_image_ids:
-                        continue
-                    if image_id:
-                        seen_image_ids.add(image_id)
-                    image_data = preview.copy()
-                    image_labels = preview.get("labels", [])
-                    if isinstance(image_labels, list):
-                        image_data["labels"] = ", ".join(image_labels)
-                    image_data["cluster_id"] = cluster_id
-                    all_images.append(image_data)
-                page_number += 1
-
-        if all_images:
-            df = pd.DataFrame(all_images)
-            return df
-        else:
-            return pd.DataFrame()
 
     def delete(self) -> dict:
         """Delete this dataset"""
@@ -307,97 +199,6 @@ class Dataset:
     def get_status(self) -> dict:
         return self.get_details()["status"]
 
-    def search_by_captions_async(self, caption_text: str, similarity_threshold: float = 0.83) -> dict:
-        """
-        Search dataset by AI-generated captions using the export_context_async endpoint.
-        Returns the export task ID for polling status.
-
-        Args:
-            caption_text (str): Text to search in captions
-            similarity_threshold (float): Threshold for semantic search (default: 0.83)
-
-        Returns:
-            dict: Export task response with task ID
-        """
-        if not caption_text:
-            self.logger.warning("No caption text provided")
-            return {}
-
-        url = f"{self.base_url}/dataset/{self.dataset_id}/export_context_async"
-
-        params = {"export_format": "json", "include_images": False, "caption_only_filter": caption_text}
-
-        try:
-            self.logger.info(f"Searching captions for: '{caption_text}' with threshold: {similarity_threshold}")
-            self.logger.info(f"API URL: {url}")
-            self.logger.info(f"API Parameters: {params}")
-
-            response = self.client.session.get(url, headers=self.client._get_headers(), params=params)
-            response.raise_for_status()
-
-            result = response.json()
-
-            # Print raw API response
-            print(f"\n📄 RAW API RESPONSE for caption search:")
-            print(f"Response type: {type(result)}")
-            print(f"Response keys: {list(result.keys()) if isinstance(result, dict) else 'Not a dict'}")
-            print(f"Full response: {json.dumps(result, indent=2)}")
-
-            self.logger.success(f"Caption search export task created successfully")
-            return result
-
-        except Exception as e:
-            self.logger.error(f"Caption search failed: {str(e)}")
-            raise
-
-    def search_by_labels_async(self, labels: List[str]) -> dict:
-        """
-        Search dataset by labels using the export_context_async endpoint, then poll export_status.
-        Returns the export status response (including download_uri if ready).
-
-        Args:
-            labels (List[str]): List of labels to search for, e.g., ["cat", "dog"]
-
-        Returns:
-            dict: Export status response with progress, status, and download_uri
-        """
-        if not labels:
-            self.logger.warning("No labels provided")
-            return {}
-
-        # Step 1: Start export task
-        url_context = f"{self.base_url}/dataset/{self.dataset_id}/export_context_async"
-        params = {"export_format": "json", "include_images": False, "labels": json.dumps(labels)}
-
-        try:
-            self.logger.info(f"Starting label search export task: {labels}")
-            response = self.client.session.get(url_context, headers=self.client._get_headers(), params=params)
-            response.raise_for_status()
-            result = response.json()
-            self.logger.success(f"Label search export task created successfully")
-        except Exception as e:
-            self.logger.error(f"Label search export_context_async failed: {str(e)}")
-            raise
-
-        # Step 2: Poll export status
-        export_task_id = result.get("id")
-        if not export_task_id:
-            self.logger.error("No export_task_id returned from export_context_async")
-            return {}
-
-        url_status = f"{self.base_url}/dataset/{self.dataset_id}/export_status"
-        status_params = {"export_task_id": export_task_id, "dataset_id": self.dataset_id}
-        try:
-            self.logger.info(f"Polling export status for task: {export_task_id}")
-            status_response = self.client.session.get(url_status, headers=self.client._get_headers(), params=status_params)
-            status_response.raise_for_status()
-            status_result = status_response.json()
-            self.logger.success(f"Export status checked successfully")
-            return status_result
-        except Exception as e:
-            self.logger.error(f"Export status check failed: {str(e)}")
-            raise
-
     def process_export_download_to_dataframe(self, download_uri: str) -> pd.DataFrame:
         """
         Download the export results from the provided URI and flatten to a DataFrame.
@@ -458,12 +259,111 @@ class Dataset:
         self.logger.export_completed(self.dataset_id, len(df))
         return df
 
-    def search_by_labels_async_to_dataframe(self, labels: List[str], poll_interval: int = 10, timeout: int = 300) -> pd.DataFrame:
+    # check return value of first api
+    # rename functions not async
+    # set the right logger level
+    # test with valid and invali dlables
+    # test with no labels empty array
+    # test with one valid
+    # test with mulitpl3 labels
+    # test with multiple invalid labels
+    # make sure to not return dataset object if id ns invalid
+    # print dataset object __str__ implement
+    # return json or dataframe
+    # yeilding dataframe or json
+    # add documentation
+
+    def search_by_visual_similarity(self, media_id: str, threshold: float = 0.5, anchor_type: str = "UPLOAD", entity_type: str = "IMAGES") -> dict:
         """
-        Search dataset by labels asynchronously, poll until export is ready, download the results, and return as a DataFrame.
+        Search dataset by visual similarity using the export_context_async endpoint and VQL.
+        Args:
+            media_id (str): The anchor media ID to search for similar images
+            threshold (float): Similarity threshold (default: 0.5)
+            anchor_type (str): Anchor type (default: 'UPLOAD')
+            entity_type (str): Entity type to search ("IMAGES" or "OBJECTS", default: "IMAGES")
+        Returns:
+            dict: Export task response with task ID, status, etc.
+        Raises:
+            ValueError: If media_id is not provided
+        """
+        if not media_id:
+            raise ValueError("media_id must be provided for visual similarity search")
+        vql = [{"similarity": {"op": anchor_type.lower(), "value": media_id, "threshold": threshold}}]
+        url = f"{self.base_url}/dataset/{self.dataset_id}/export_context_async"
+        params = {"export_format": "json", "include_images": False, "entity_type": entity_type, "vql": json.dumps(vql)}
+        try:
+            self.logger.info(f"Starting visual similarity search with VQL: {vql}")
+            response = self.client.session.get(url, headers=self.client._get_headers(), params=params)
+            response.raise_for_status()
+            result = response.json()
+            self.logger.success(f"Visual similarity search (VQL) export task created successfully")
+            return result
+        except Exception as e:
+            self.logger.error(f"Visual similarity search (VQL) failed: {str(e)}")
+            raise
+
+    def search_by_visual_similarity_to_dataframe(
+        self, media_id: str, threshold: float = 0.5, anchor_type: str = "UPLOAD", entity_type: str = "IMAGES", poll_interval: int = 10, timeout: int = 300
+    ) -> pd.DataFrame:
+        """
+        Search dataset by visual similarity asynchronously, poll until export is ready, download the results, and return as a DataFrame.
+        Args:
+            media_id (str): The anchor media ID to search for similar images
+            threshold (float): Similarity threshold (default: 0.5)
+            anchor_type (str): Anchor type (default: 'UPLOAD')
+            entity_type (str): Entity type to search ("IMAGES" or "OBJECTS", default: "IMAGES")
+            poll_interval (int): Seconds to wait between status polls (default: 10)
+            timeout (int): Maximum seconds to wait for export to complete (default: 300)
+        Returns:
+            pd.DataFrame: DataFrame containing the search results, or empty if not ready
+        Raises:
+            ValueError: If media_id is not provided
+        """
+        import time
+
+        start_time = time.time()
+        # Step 1: Start async search and get initial status
+        status_result = self.search_by_visual_similarity(media_id=media_id, threshold=threshold, anchor_type=anchor_type, entity_type=entity_type)
+        download_uri = status_result.get("download_uri")
+        status = status_result.get("status")
+        export_task_id = status_result.get("id")
+        # If no download_uri in the first response, return empty DataFrame immediately
+        if status == "REJECTED" or status is None:
+            self.logger.info("No images matched the visual similarity search. Returning empty DataFrame.")
+            return pd.DataFrame()
+        # Poll if not ready
+        while (status != "COMPLETED" or not download_uri) and (time.time() - start_time < timeout):
+            self.logger.info(f"Export not ready (status: {status}). Waiting {poll_interval}s before polling again...")
+            time.sleep(poll_interval)
+            # Poll status endpoint
+            poll_status = self.client.session.get(
+                f"{self.client.base_url}/dataset/{self.dataset_id}/export_status",
+                headers=self.client._get_headers(),
+                params={"export_task_id": export_task_id, "dataset_id": self.dataset_id},
+            )
+            poll_status.raise_for_status()
+            status_result = poll_status.json()
+            download_uri = status_result.get("download_uri")
+            status = status_result.get("status")
+            # Check if export was rejected during polling
+            if status == "REJECTED":
+                result_message = status_result.get("result_message", "No reason provided")
+                self.logger.error(f"Export request rejected during polling: {result_message}")
+                print(f"❌ Export request rejected during polling: {result_message}")
+                return pd.DataFrame()
+        if status != "COMPLETED" or not download_uri:
+            self.logger.warning(f"Export not completed or no download_uri after waiting. Final status: {status}")
+            return pd.DataFrame()
+        # Step 2: Use the general processor
+        return self.process_export_download_to_dataframe(download_uri)
+
+    def search_by_captions_to_dataframe(self, caption_text: str, entity_type: str = "IMAGES", poll_interval: int = 10, timeout: int = 300) -> pd.DataFrame:
+        """
+        Search dataset by captions using VQL asynchronously, poll until export is ready, download the results, and return as a DataFrame.
 
         Args:
-            labels (List[str]): List of labels to search for
+            caption_text (str): Text to search in captions
+            entity_type (str): Entity type to search ("IMAGES" or "OBJECTS", default: "IMAGES")
             poll_interval (int): Seconds to wait between status polls (default: 10)
             timeout (int): Maximum seconds to wait for export to complete (default: 300)
 
@@ -474,11 +374,19 @@ class Dataset:
 
         start_time = time.time()
 
-        # Step 1: Start async search and get initial status
-        status_result = self.search_by_labels_async(labels)
+        # Form the VQL for caption search
+        vql = [{"text": {"op": "fts", "value": caption_text}}]
+
+        # Step 1: Start async search and get initial status using the general VQL function
+        status_result = self.search_by_vql(vql, entity_type)
         download_uri = status_result.get("download_uri")
         status = status_result.get("status")
         export_task_id = status_result.get("id")
+
+        # If no download_uri in the first response, return empty DataFrame immediately
+        if status == "REJECTED" or status is None:
+            self.logger.info("No images matched the VQL caption search. Returning empty DataFrame.")
+            return pd.DataFrame()
 
         # Poll if not ready
         while (status != "COMPLETED" or not download_uri) and (time.time() - start_time < timeout):
@@ -495,6 +403,13 @@ class Dataset:
             download_uri = status_result.get("download_uri")
             status = status_result.get("status")
 
+            # Check if export was rejected during polling
+            if status == "REJECTED":
+                result_message = status_result.get("result_message", "No reason provided")
+                self.logger.error(f"Export request rejected during polling: {result_message}")
+                print(f"❌ Export request rejected during polling: {result_message}")
+                return pd.DataFrame()
+
         if status != "COMPLETED" or not download_uri:
             self.logger.warning(f"Export not completed or no download_uri after waiting. Final status: {status}")
             return pd.DataFrame()
@@ -502,6 +417,97 @@ class Dataset:
         # Step 2: Use the general processor
         return self.process_export_download_to_dataframe(download_uri)
 
+    def search_by_labels_to_dataframe(self, labels: List[str], entity_type: str = "IMAGES", poll_interval: int = 10, timeout: int = 300) -> pd.DataFrame:
+        """
+        Search dataset by labels using VQL asynchronously, poll until export is ready, download the results, and return as a DataFrame.
+
+        Args:
+            labels (List[str]): List of labels to search for
+            entity_type (str): Entity type to search ("IMAGES" or "OBJECTS", default: "IMAGES")
+            poll_interval (int): Seconds to wait between status polls (default: 10)
+            timeout (int): Maximum seconds to wait for export to complete (default: 300)
+
+        Returns:
+            pd.DataFrame: DataFrame containing the search results, or empty if not ready
+        """
+        import time
+
+        start_time = time.time()
+
+        # Form the VQL for label search
+        vql = [{"id": "label_filter", "labels": {"op": "one_of", "value": labels}}]
+
+        # Step 1: Start async search and get initial status using the general VQL function
+        status_result = self.search_by_vql(vql, entity_type)
+        download_uri = status_result.get("download_uri")
+        status = status_result.get("status")
+        export_task_id = status_result.get("id")
+
+        # If no download_uri in the first response, return empty DataFrame immediately
+        if status == "REJECTED" or status is None:
+            self.logger.info("No images matched the VQL label search. Returning empty DataFrame.")
+            return pd.DataFrame()
+
+        # Poll if not ready
+        while (status != "COMPLETED" or not download_uri) and (time.time() - start_time < timeout):
+            self.logger.info(f"Export not ready (status: {status}). Waiting {poll_interval}s before polling again...")
+            time.sleep(poll_interval)
+            # Poll status endpoint
+            poll_status = self.client.session.get(
+                f"{self.client.base_url}/dataset/{self.dataset_id}/export_status",
+                headers=self.client._get_headers(),
+                params={"export_task_id": export_task_id, "dataset_id": self.dataset_id},
+            )
+            poll_status.raise_for_status()
+            status_result = poll_status.json()
+            download_uri = status_result.get("download_uri")
+            status = status_result.get("status")
+
+            # Check if export was rejected during polling
+            if status == "REJECTED":
+                result_message = status_result.get("result_message", "No reason provided")
+                self.logger.error(f"Export request rejected during polling: {result_message}")
+                print(f"❌ Export request rejected during polling: {result_message}")
+                return pd.DataFrame()
+
+        if status != "COMPLETED" or not download_uri:
+            self.logger.warning(f"Export not completed or no download_uri after waiting. Final status: {status}")
+            return pd.DataFrame()
+
+        # Step 2: Use the general processor
+        return self.process_export_download_to_dataframe(download_uri)
+
+    def search_by_vql(self, vql: List[dict], entity_type: str = "IMAGES") -> dict:
+        """
+        Search dataset using custom VQL (Visual Query Language).
+        Makes the first API call to export_context_async and returns the response.
+
+        Args:
+            vql (List[dict]): VQL query structure as a list of filter objects
+            entity_type (str): Entity type to search ("IMAGES" or "OBJECTS", default: "IMAGES")
+
+        Returns:
+            dict: Export task response with task ID, status, etc.
+        """
+        if not vql:
+            self.logger.warning("No VQL provided for search")
+            return {}
+
+        url = f"{self.base_url}/dataset/{self.dataset_id}/export_context_async"
+        params = {"export_format": "json", "include_images": False, "entity_type": entity_type, "vql": json.dumps(vql)}
+
+        try:
+            self.logger.info(f"Starting VQL search with query: {vql}")
+            response = self.client.session.get(url, headers=self.client._get_headers(), params=params)
+            response.raise_for_status()
+            result = response.json()
+            self.logger.success(f"VQL search export task created successfully")
+            return result
+        except Exception as e:
+            self.logger.error(f"VQL search failed: {str(e)}")
+            raise
+
+    # 4 booleans to see if each search is available
     def download_export_results(self, download_uri: str) -> dict:
         """
         Download the export results from the provided URI.
