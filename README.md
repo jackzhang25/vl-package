@@ -214,50 +214,99 @@ Delete the dataset permanently.
 result = dataset.delete()
 ```
 
-##### `search_by_labels_to_dataframe(labels: List[str], operators: SearchOperator = SearchOperator.IS_ONE_OF, poll_interval: int = 10, timeout: int = 300) -> pd.DataFrame`
-Search the dataset by labels asynchronously, poll until export is ready, download the results, and return as a DataFrame.
+##### `search_by_labels_to_dataframe(labels: List[str], entity_type: str = "IMAGES") -> pd.DataFrame`
+Search the dataset by labels using VQL asynchronously, poll until export is ready, download the results, and return as a DataFrame.
 
 ```python
-from visual_layer_sdk.dataset import SearchOperator
 labels = ["cat", "dog"]
-df = dataset.search_by_labels_to_dataframe(labels, operators=SearchOperator.IS_ONE_OF)
+df = dataset.search_by_labels_to_dataframe(labels)
 ```
 
 - `labels` (List[str]): List of labels to search for
-- `operators` (SearchOperator): Search operator (default: SearchOperator.IS_ONE_OF)
-- `poll_interval` (int): Seconds to wait between status polls (default: 10)
-- `timeout` (int): Maximum seconds to wait for export to complete (default: 300)
+- `entity_type` (str): Entity type to search ("IMAGES" or "OBJECTS", default: "IMAGES")
 
 **Returns:** DataFrame containing the search results, or empty if not ready or no matches found.
 
-##### `search_by_captions_to_dataframe(caption_text: List[str], operators: SearchOperator = SearchOperator.IS_ONE_OF, poll_interval: int = 10, timeout: int = 300) -> pd.DataFrame`
-Search the dataset by captions asynchronously, poll until export is ready, download the results, and return as a DataFrame.
+##### `search_by_captions_to_dataframe(caption_text: List[str], entity_type: str = "IMAGES") -> pd.DataFrame`
+Search the dataset by captions using VQL asynchronously, poll until export is ready, download the results, and return as a DataFrame.
 
 ```python
-from visual_layer_sdk.dataset import SearchOperator
-df = dataset.search_by_captions_to_dataframe(["cat", "sitting", "outdoors"], operators=SearchOperator.IS_ONE_OF)
+df = dataset.search_by_captions_to_dataframe(["cat", "sitting", "outdoors"])
 ```
 
-- `caption_text` (List[str]): List of text strings to search in captions (these will be combined into a single search string)
-- `operators` (SearchOperator): Search operator (default: SearchOperator.IS_ONE_OF)
-- `poll_interval` (int): Seconds to wait between status polls (default: 10)
-- `timeout` (int): Maximum seconds to wait for export to complete (default: 300)
+- `caption_text` (List[str]): List of text strings to search in captions (will be combined into one search string)
+- `entity_type` (str): Entity type to search ("IMAGES" or "OBJECTS", default: "IMAGES")
 
 **Returns:** DataFrame containing the search results, or empty if not ready or no matches found.
 
-##### `SearchOperator` Enum
-The `operators` parameter for both methods uses the `SearchOperator` enum:
+##### `search_by_issues_to_dataframe(issue_type: str, confidence_min: float = 0.8, confidence_max: float = 1.0) -> pd.DataFrame`
+Search the dataset by issues using VQL asynchronously, poll until export is ready, download the results, and return as a DataFrame.
 
 ```python
-from visual_layer_sdk.dataset import SearchOperator
-
-SearchOperator.IS           # "is"
-SearchOperator.IS_NOT       # "is not"
-SearchOperator.IS_ONE_OF    # "is one of"
-SearchOperator.IS_NOT_ONE_OF # "is not one of"
+df = dataset.search_by_issues_to_dataframe(issue_type="outliers")
+df = dataset.search_by_issues_to_dataframe(issue_type="blur", confidence_min=0.9)
 ```
 
-Currently, only `SearchOperator.IS_ONE_OF` is supported.
+- `issue_type` (str): Issue type to search for (e.g., "blur", "dark", "outliers", "mislabels", "duplicates", "bright", "normal", "label_outlier")
+- `confidence_min` (float): Minimum confidence threshold (default: 0.8)
+- `confidence_max` (float): Maximum confidence threshold (default: 1.0)
+
+**Returns:** DataFrame containing the search results, or empty if not ready or no matches found.
+
+##### `search_by_visual_similarity_to_dataframe(image_path: str, threshold: str = "0", anchor_type: str = "UPLOAD", entity_type: str = "IMAGES") -> pd.DataFrame`
+Search the dataset by visual similarity using a local image file as anchor, poll until export is ready, download the results, and return as a DataFrame.
+
+```python
+df = dataset.search_by_visual_similarity_to_dataframe(image_path="/path/to/image.jpg")
+df = dataset.search_by_visual_similarity_to_dataframe(image_path="/path/to/image.jpg", threshold="0.5")
+```
+
+- `image_path` (str): Path to the image file to use as anchor
+- `threshold` (str): Similarity threshold as string (default: "0")
+- `anchor_type` (str): Anchor type (default: "UPLOAD")
+- `entity_type` (str): Entity type to search ("IMAGES" or "OBJECTS", default: "IMAGES")
+
+**Returns:** DataFrame containing the search results, or empty if not ready or no matches found.
+
+##### `search_by_vql(vql: List[dict], entity_type: str = "IMAGES") -> pd.DataFrame`
+Search the dataset using custom VQL (Visual Query Language) asynchronously, poll until export is ready, download the results, and return as a DataFrame.
+
+```python
+# Label search
+vql = [{"id": "label_filter", "labels": {"op": "one_of", "value": ["cat", "dog"]}}]
+df = dataset.search_by_vql(vql)
+
+# Caption search
+vql = [{"text": {"op": "fts", "value": "cat sitting"}}]
+df = dataset.search_by_vql(vql)
+
+# Issue search
+vql = [{"issues": {"op": "issue", "value": "outliers", "confidence_min": 0.8, "confidence_max": 1.0, "mode": "in"}}]
+df = dataset.search_by_vql(vql)
+
+# Visual similarity search
+vql = [{"id": "similarity_search", "similarity": {"op": "upload", "value": "media_id"}}]
+df = dataset.search_by_vql(vql)
+```
+
+- `vql` (List[dict]): VQL query structure as a list of filter objects
+- `entity_type` (str): Entity type to search ("IMAGES" or "OBJECTS", default: "IMAGES")
+
+**Returns:** DataFrame containing the search results, or empty if not ready or no matches found.
+
+##### `search_by_image_file(image_path: str, allow_deleted: bool = False) -> dict`
+Upload an image file and get the anchor media ID for similarity search.
+
+```python
+result = dataset.search_by_image_file("/path/to/image.jpg")
+media_id = result["anchor_media_id"]
+anchor_type = result["anchor_type"]
+```
+
+- `image_path` (str): Path to the image file (JPEG, PNG, etc.)
+- `allow_deleted` (bool): Whether to include deleted images in search (default: False)
+
+**Returns:** Dictionary with `anchor_media_id` and `anchor_type`.
 
 ## Complete Example
 

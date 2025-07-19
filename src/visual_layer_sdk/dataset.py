@@ -28,11 +28,13 @@ ALLOWED_ISSUE_NAMES = {v["name"] for v in ISSUE_TYPE_MAPPING.values()}
 
 class Dataset:
     # TODO: add id and name fields
-    def __init__(self, client, dataset_id: str):
+    def __init__(self, client, dataset_id: str, poll_interval: int = 10, timeout: int = 300):
         self.client = client
         self.dataset_id = dataset_id
         self.base_url = client.base_url
         self.logger = get_logger()
+        self.poll_interval = poll_interval
+        self.timeout = timeout
 
         # Validate that the dataset exists
         self._validate_dataset_exists()
@@ -259,223 +261,97 @@ class Dataset:
         self.logger.export_completed(self.dataset_id, len(df))
         return df
 
-    # check return value of first api
-    # rename functions not async
-    # set the right logger level
-    # test with valid and invali dlables
-    # test with no labels empty array
-    # test with one valid
-    # test with mulitpl3 labels
-    # test with multiple invalid labels
-    # make sure to not return dataset object if id ns invalid
-    # print dataset object __str__ implement
-    # return json or dataframe
-    # yeilding dataframe or json
-    # add documentation
-
-    def search_by_visual_similarity(self, media_id: str, threshold: float = 0.5, anchor_type: str = "UPLOAD", entity_type: str = "IMAGES") -> dict:
-        """
-        Search dataset by visual similarity using the export_context_async endpoint and VQL.
-        Args:
-            media_id (str): The anchor media ID to search for similar images
-            threshold (float): Similarity threshold (default: 0.5)
-            anchor_type (str): Anchor type (default: 'UPLOAD')
-            entity_type (str): Entity type to search ("IMAGES" or "OBJECTS", default: "IMAGES")
-        Returns:
-            dict: Export task response with task ID, status, etc.
-        Raises:
-            ValueError: If media_id is not provided
-        """
-        if not media_id:
-            raise ValueError("media_id must be provided for visual similarity search")
-        vql = [{"similarity": {"op": anchor_type.lower(), "value": media_id, "threshold": threshold}}]
-        url = f"{self.base_url}/dataset/{self.dataset_id}/export_context_async"
-        params = {"export_format": "json", "include_images": False, "entity_type": entity_type, "vql": json.dumps(vql)}
-        try:
-            self.logger.info(f"Starting visual similarity search with VQL: {vql}")
-            response = self.client.session.get(url, headers=self.client._get_headers(), params=params)
-            response.raise_for_status()
-            result = response.json()
-            self.logger.success(f"Visual similarity search (VQL) export task created successfully")
-            return result
-        except Exception as e:
-            self.logger.error(f"Visual similarity search (VQL) failed: {str(e)}")
-            raise
-
-    def search_by_visual_similarity_to_dataframe(
-        self, media_id: str, threshold: float = 0.5, anchor_type: str = "UPLOAD", entity_type: str = "IMAGES", poll_interval: int = 10, timeout: int = 300
-    ) -> pd.DataFrame:
+    def search_by_visual_similarity_to_dataframe(self, image_path: str, threshold: str = "0", anchor_type: str = "UPLOAD", entity_type: str = "IMAGES") -> pd.DataFrame:
         """
         Search dataset by visual similarity asynchronously, poll until export is ready, download the results, and return as a DataFrame.
         Args:
-            media_id (str): The anchor media ID to search for similar images
-            threshold (float): Similarity threshold (default: 0.5)
+            image_path (str): Path to the image file to use as anchor
+            threshold (str): Similarity threshold as string (default: "0")
             anchor_type (str): Anchor type (default: 'UPLOAD')
             entity_type (str): Entity type to search ("IMAGES" or "OBJECTS", default: "IMAGES")
-            poll_interval (int): Seconds to wait between status polls (default: 10)
-            timeout (int): Maximum seconds to wait for export to complete (default: 300)
         Returns:
             pd.DataFrame: DataFrame containing the search results, or empty if not ready
         Raises:
-            ValueError: If media_id is not provided
+            ValueError: If image_path is not provided
         """
         import time
 
         start_time = time.time()
-        # Step 1: Start async search and get initial status
-        status_result = self.search_by_visual_similarity(media_id=media_id, threshold=threshold, anchor_type=anchor_type, entity_type=entity_type)
-        download_uri = status_result.get("download_uri")
-        status = status_result.get("status")
-        export_task_id = status_result.get("id")
-        # If no download_uri in the first response, return empty DataFrame immediately
-        if status == "REJECTED" or status is None:
-            self.logger.info("No images matched the visual similarity search. Returning empty DataFrame.")
-            return pd.DataFrame()
-        # Poll if not ready
-        while (status != "COMPLETED" or not download_uri) and (time.time() - start_time < timeout):
-            self.logger.info(f"Export not ready (status: {status}). Waiting {poll_interval}s before polling again...")
-            time.sleep(poll_interval)
-            # Poll status endpoint
-            poll_status = self.client.session.get(
-                f"{self.client.base_url}/dataset/{self.dataset_id}/export_status",
-                headers=self.client._get_headers(),
-                params={"export_task_id": export_task_id, "dataset_id": self.dataset_id},
-            )
-            poll_status.raise_for_status()
-            status_result = poll_status.json()
-            download_uri = status_result.get("download_uri")
-            status = status_result.get("status")
-            # Check if export was rejected during polling
-            if status == "REJECTED":
-                result_message = status_result.get("result_message", "No reason provided")
-                self.logger.error(f"Export request rejected during polling: {result_message}")
-                print(f"❌ Export request rejected during polling: {result_message}")
-                return pd.DataFrame()
-        if status != "COMPLETED" or not download_uri:
-            self.logger.warning(f"Export not completed or no download_uri after waiting. Final status: {status}")
-            return pd.DataFrame()
-        # Step 2: Use the general processor
-        return self.process_export_download_to_dataframe(download_uri)
+        # Get media_id from image file upload
+        upload_result = self.search_by_image_file(image_path=image_path)
+        media_id = upload_result.get("anchor_media_id")
+        if not media_id:
+            raise ValueError("Failed to get anchor_media_id from image upload")
 
-    def search_by_captions_to_dataframe(self, caption_text: str, entity_type: str = "IMAGES", poll_interval: int = 10, timeout: int = 300) -> pd.DataFrame:
+        # Form the VQL for visual similarity search
+        vql = [{"id": "similarity_search", "similarity": {"op": "upload", "value": media_id}}]
+
+        # Step 1: Start async search and get initial status using the general VQL function
+        return self.search_by_vql(vql, entity_type)
+
+    def search_by_captions_to_dataframe(self, caption_text: List[str], entity_type: str = "IMAGES") -> pd.DataFrame:
         """
         Search dataset by captions using VQL asynchronously, poll until export is ready, download the results, and return as a DataFrame.
 
         Args:
-            caption_text (str): Text to search in captions
+            caption_text (List[str]): List of text strings to search in captions (will be combined into one search string)
             entity_type (str): Entity type to search ("IMAGES" or "OBJECTS", default: "IMAGES")
-            poll_interval (int): Seconds to wait between status polls (default: 10)
-            timeout (int): Maximum seconds to wait for export to complete (default: 300)
 
         Returns:
             pd.DataFrame: DataFrame containing the search results, or empty if not ready
         """
-        import time
-
-        start_time = time.time()
+        # Combine the list of strings into one search string
+        combined_text = " ".join(caption_text)
 
         # Form the VQL for caption search
-        vql = [{"text": {"op": "fts", "value": caption_text}}]
+        vql = [{"text": {"op": "fts", "value": combined_text}}]
 
         # Step 1: Start async search and get initial status using the general VQL function
-        status_result = self.search_by_vql(vql, entity_type)
-        download_uri = status_result.get("download_uri")
-        status = status_result.get("status")
-        export_task_id = status_result.get("id")
+        return self.search_by_vql(vql, entity_type)
 
-        # If no download_uri in the first response, return empty DataFrame immediately
-        if status == "REJECTED" or status is None:
-            self.logger.info("No images matched the VQL caption search. Returning empty DataFrame.")
-            return pd.DataFrame()
-
-        # Poll if not ready
-        while (status != "COMPLETED" or not download_uri) and (time.time() - start_time < timeout):
-            self.logger.info(f"Export not ready (status: {status}). Waiting {poll_interval}s before polling again...")
-            time.sleep(poll_interval)
-            # Poll status endpoint
-            poll_status = self.client.session.get(
-                f"{self.client.base_url}/dataset/{self.dataset_id}/export_status",
-                headers=self.client._get_headers(),
-                params={"export_task_id": export_task_id, "dataset_id": self.dataset_id},
-            )
-            poll_status.raise_for_status()
-            status_result = poll_status.json()
-            download_uri = status_result.get("download_uri")
-            status = status_result.get("status")
-
-            # Check if export was rejected during polling
-            if status == "REJECTED":
-                result_message = status_result.get("result_message", "No reason provided")
-                self.logger.error(f"Export request rejected during polling: {result_message}")
-                print(f"❌ Export request rejected during polling: {result_message}")
-                return pd.DataFrame()
-
-        if status != "COMPLETED" or not download_uri:
-            self.logger.warning(f"Export not completed or no download_uri after waiting. Final status: {status}")
-            return pd.DataFrame()
-
-        # Step 2: Use the general processor
-        return self.process_export_download_to_dataframe(download_uri)
-
-    def search_by_labels_to_dataframe(self, labels: List[str], entity_type: str = "IMAGES", poll_interval: int = 10, timeout: int = 300) -> pd.DataFrame:
+    def search_by_labels_to_dataframe(self, labels: List[str], entity_type: str = "IMAGES") -> pd.DataFrame:
         """
         Search dataset by labels using VQL asynchronously, poll until export is ready, download the results, and return as a DataFrame.
 
         Args:
             labels (List[str]): List of labels to search for
             entity_type (str): Entity type to search ("IMAGES" or "OBJECTS", default: "IMAGES")
-            poll_interval (int): Seconds to wait between status polls (default: 10)
-            timeout (int): Maximum seconds to wait for export to complete (default: 300)
 
         Returns:
             pd.DataFrame: DataFrame containing the search results, or empty if not ready
         """
-        import time
-
-        start_time = time.time()
 
         # Form the VQL for label search
         vql = [{"id": "label_filter", "labels": {"op": "one_of", "value": labels}}]
 
         # Step 1: Start async search and get initial status using the general VQL function
-        status_result = self.search_by_vql(vql, entity_type)
-        download_uri = status_result.get("download_uri")
-        status = status_result.get("status")
-        export_task_id = status_result.get("id")
+        return self.search_by_vql(vql, entity_type)
 
-        # If no download_uri in the first response, return empty DataFrame immediately
-        if status == "REJECTED" or status is None:
-            self.logger.info("No images matched the VQL label search. Returning empty DataFrame.")
-            return pd.DataFrame()
+    def search_by_issues_to_dataframe(self, issue_type: str = None, confidence_min: float = 0.8, confidence_max: float = 1.0) -> pd.DataFrame:
+        """
+        Search dataset by issues using VQL and return as DataFrame.
 
-        # Poll if not ready
-        while (status != "COMPLETED" or not download_uri) and (time.time() - start_time < timeout):
-            self.logger.info(f"Export not ready (status: {status}). Waiting {poll_interval}s before polling again...")
-            time.sleep(poll_interval)
-            # Poll status endpoint
-            poll_status = self.client.session.get(
-                f"{self.client.base_url}/dataset/{self.dataset_id}/export_status",
-                headers=self.client._get_headers(),
-                params={"export_task_id": export_task_id, "dataset_id": self.dataset_id},
-            )
-            poll_status.raise_for_status()
-            status_result = poll_status.json()
-            download_uri = status_result.get("download_uri")
-            status = status_result.get("status")
+        Args:
+            issue_types (List[str]): List of issue types to search for (e.g., ["blur", "dark", "outliers"])
+            confidence_min (float): Minimum confidence threshold (default: 0.8)
+            confidence_max (float): Maximum confidence threshold (default: 1.0)
 
-            # Check if export was rejected during polling
-            if status == "REJECTED":
-                result_message = status_result.get("result_message", "No reason provided")
-                self.logger.error(f"Export request rejected during polling: {result_message}")
-                print(f"❌ Export request rejected during polling: {result_message}")
-                return pd.DataFrame()
+        Returns:
+            pd.DataFrame: DataFrame containing the search results
+        """
+        if not issue_type:
+            raise ValueError("issue_type must be provided")
 
-        if status != "COMPLETED" or not download_uri:
-            self.logger.warning(f"Export not completed or no download_uri after waiting. Final status: {status}")
-            return pd.DataFrame()
+        # Validate issue types against allowed names
 
-        # Step 2: Use the general processor
-        return self.process_export_download_to_dataframe(download_uri)
+        if issue_type not in ALLOWED_ISSUE_NAMES:
+            raise ValueError(f"Invalid issue type '{issue_type}'. Allowed types: {list(ALLOWED_ISSUE_NAMES)}")
+
+        # Build VQL for issue search
+        vql = [{"issues": {"op": "issue", "value": issue_type, "confidence_min": confidence_min, "confidence_max": confidence_max, "mode": "in"}}]
+
+        # Call the general VQL search function
+        return self.search_by_vql(vql, "IMAGES")
 
     def search_by_vql(self, vql: List[dict], entity_type: str = "IMAGES") -> dict:
         """
@@ -497,12 +373,51 @@ class Dataset:
         params = {"export_format": "json", "include_images": False, "entity_type": entity_type, "vql": json.dumps(vql)}
 
         try:
+            import time
+
+            start_time = time.time()
             self.logger.info(f"Starting VQL search with query: {vql}")
             response = self.client.session.get(url, headers=self.client._get_headers(), params=params)
             response.raise_for_status()
-            result = response.json()
+            status_result = response.json()
             self.logger.success(f"VQL search export task created successfully")
-            return result
+            download_uri = status_result.get("download_uri")
+            status = status_result.get("status")
+            export_task_id = status_result.get("id")
+
+            # If no download_uri in the first response, return empty DataFrame immediately
+            if status == "REJECTED" or status is None:
+                self.logger.info("No images matched the VQL label search. Returning empty DataFrame.")
+                return pd.DataFrame()
+
+            # Poll if not ready
+            while (status != "COMPLETED" or not download_uri) and (time.time() - start_time < self.timeout):
+                self.logger.info(f"Export not ready (status: {status}). Waiting {self.poll_interval}s before polling again...")
+                time.sleep(self.poll_interval)
+                # Poll status endpoint
+                poll_status = self.client.session.get(
+                    f"{self.client.base_url}/dataset/{self.dataset_id}/export_status",
+                    headers=self.client._get_headers(),
+                    params={"export_task_id": export_task_id, "dataset_id": self.dataset_id},
+                )
+                poll_status.raise_for_status()
+                status_result = poll_status.json()
+                download_uri = status_result.get("download_uri")
+                status = status_result.get("status")
+
+                # Check if export was rejected during polling
+                if status == "REJECTED":
+                    result_message = status_result.get("result_message", "No reason provided")
+                    self.logger.error(f"Export request rejected during polling: {result_message}")
+                    print(f"❌ Export request rejected during polling: {result_message}")
+                    return pd.DataFrame()
+
+            if status != "COMPLETED" or not download_uri:
+                self.logger.warning(f"Export not completed or no download_uri after waiting. Final status: {status}")
+                return pd.DataFrame()
+
+            # Step 2: Use the general processor
+            return self.process_export_download_to_dataframe(download_uri)
         except Exception as e:
             self.logger.error(f"VQL search failed: {str(e)}")
             raise
@@ -584,4 +499,72 @@ class Dataset:
 
         except Exception as e:
             self.logger.error(f"Export download failed: {str(e)}")
+            raise
+
+    def search_by_image_file(self, image_path: str, allow_deleted: bool = False) -> dict:
+        """
+        Search for visually similar images using a local image file.
+        Uploads the image and searches for similar images in the dataset.
+
+        Args:
+            image_path (str): Path to the image file (JPEG, PNG, etc.)
+            allow_deleted (bool): Whether to include deleted images in search (default: False)
+
+        Returns:
+            dict: API response with anchor_media_id and anchor_type
+        """
+        import os
+        from pathlib import Path
+
+        # Validate file exists
+        if not os.path.exists(image_path):
+            raise ValueError(f"Image file not found: {image_path}")
+
+        # Get file info
+        file_path = Path(image_path)
+        if not file_path.is_file():
+            raise ValueError(f"Path is not a file: {image_path}")
+
+        # Determine content type
+        content_type = "image/jpeg"  # Default
+        if file_path.suffix.lower() in [".png"]:
+            content_type = "image/png"
+        elif file_path.suffix.lower() in [".jpg", ".jpeg"]:
+            content_type = "image/jpeg"
+
+        url = f"{self.base_url}/dataset/{self.dataset_id}/search-image-similarity"
+        params = {"allow_deleted": allow_deleted}
+
+        try:
+            self.logger.info(f"Uploading image file for similarity search: {image_path}")
+
+            # Prepare multipart form data
+            with open(image_path, "rb") as file:
+                files = {"file": (file_path.name, file, content_type)}
+
+                # Remove Content-Type header to let requests set it for multipart
+                headers = self.client._get_headers()
+                headers.pop("Content-Type", None)
+
+                self.logger.debug(f"URL: {url}")
+                self.logger.debug(f"Params: {params}")
+                self.logger.debug(f"Headers: {headers}")
+                self.logger.debug(f"File: {file_path.name}, Content-Type: {content_type}")
+
+                response = self.client.session.post(url, headers=headers, params=params, files=files)
+
+                self.logger.debug(f"Response status: {response.status_code}")
+                self.logger.debug(f"Response headers: {dict(response.headers)}")
+
+                if response.status_code != 200:
+                    self.logger.debug(f"Response text: {response.text}")
+
+                response.raise_for_status()
+                result = response.json()
+
+                self.logger.success(f"Image similarity search completed successfully")
+                return result
+
+        except Exception as e:
+            self.logger.error(f"Image similarity search failed: {str(e)}")
             raise

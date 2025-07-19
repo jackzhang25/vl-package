@@ -372,74 +372,29 @@ def main():
     test_dataset_id = "bc41491e-78ae-11ef-ba4b-8a774758b536"
     test_dataset = Dataset(client, test_dataset_id)
 
-    print("\n" + "=" * 60)
-    print("TESTING VQL SEARCHES")
-    print("=" * 60)
+    # Test image file search (if you have a test image file)
 
-    # Test 1: VQL Label Search
-    print("\n🔍 Test 1: VQL Label Search for 'healthy'")
-    print("-" * 40)
+    # Test issue search
+    print(f"\n📊 Testing issue search:")
     try:
-        df_labels = test_dataset.search_by_labels_to_dataframe(labels=["healthy"])
-        print(f"✅ Found {len(df_labels)} images with 'healthy' label using VQL")
-        if len(df_labels) > 0:
+        df_issues = test_dataset.search_by_issues_to_dataframe(issue_type="outliers")
+        print(f"✅ Found {len(df_issues)} images with outliers using issue search")
+        if len(df_issues) > 0:
             print(f"Sample results:")
-            print(df_labels.head(3))
-            # Save results
-            csv_filename = "vql_label_search_healthy.csv"
-            df_labels.to_csv(csv_filename, index=False)
+            print(df_issues.head(3))
+            csv_filename = "issue_search_results.csv"
+            df_issues.to_csv(csv_filename, index=False)
             print(f"📄 Results saved to: {csv_filename}")
         else:
-            print("❌ No images found with 'healthy' label")
+            print("❌ No images with outliers found")
     except Exception as e:
-        print(f"❌ Error in VQL label search: {str(e)}")
-
-    # Test 2: VQL Caption Search
-    print("\n🔍 Test 2: VQL Caption Search for 'leaf'")
-    print("-" * 40)
-    try:
-        df_captions = test_dataset.search_by_captions_to_dataframe(caption_text="leaf")
-        print(f"✅ Found {len(df_captions)} images with 'leaf' in captions using VQL")
-        if len(df_captions) > 0:
-            print(f"Sample results:")
-            print(df_captions.head(3))
-            # Save results
-            csv_filename = "vql_caption_search_leaf.csv"
-            df_captions.to_csv(csv_filename, index=False)
-            print(f"📄 Results saved to: {csv_filename}")
-        else:
-            print("❌ No images found with 'leaf' in captions")
-    except Exception as e:
-        print(f"❌ Error in VQL caption search: {str(e)}")
-
-    # Test 3: Dataset Information
-    print("\n🔍 Test 3: Dataset Information")
-    print("-" * 40)
-    try:
-        details = test_dataset.get_details()
-        print(f"Dataset Name: {details.get('display_name', 'Unknown')}")
-        print(f"Dataset Status: {details.get('status', 'Unknown')}")
-        print(f"Created At: {details.get('created_at', 'Unknown')}")
-        print(f"Description: {details.get('description', 'No description')}")
-    except Exception as e:
-        print(f"❌ Error getting dataset details: {str(e)}")
-
-    # Test 4: VQL Structure Examples
-    print("\n🔍 Test 4: VQL Structure Examples")
-    print("-" * 40)
-    print("📋 VQL Structures used in the tests:")
-    print("• Label Search: [{'id': 'label_filter', 'labels': {'op': 'one_of', 'value': ['healthy']}}]")
-    print("• Caption Search: [{'text': {'op': 'fts', 'value': 'leaf'}}]")
+        print(f"❌ Error in issue search: {str(e)}")
 
     print("\n" + "=" * 60)
     print("TESTING COMPLETE")
     print("=" * 60)
-    print("✅ VQL search tests completed!")
-    print("📁 Check the generated CSV files for detailed results")
-    print("🔍 Tests performed:")
-    print("  • VQL Label Search (healthy)")
-    print("  • VQL Caption Search (leaf)")
-    print("  • Dataset information")
+    print("✅ Visual similarity search test completed!")
+    print("📁 Check the generated CSV file for detailed results")
 
 
 if __name__ == "__main__":
